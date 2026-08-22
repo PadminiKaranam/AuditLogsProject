@@ -3,6 +3,7 @@ package com.persistent.audit.controller;
 import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.NoSuchElementException;
 import java.util.stream.Collectors;
 
 import org.springframework.data.domain.Page;
@@ -22,6 +23,7 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 
 import com.persistent.audit.model.ChainVerificationResult;
+import com.persistent.audit.model.Event;
 import com.persistent.audit.model.EventCreateRequest;
 import com.persistent.audit.model.EventCreateResponseObject;
 import com.persistent.audit.model.RetentionCheckResult;
@@ -98,6 +100,23 @@ public class AuditLogsController {
 		return ResponseEntity.ok(result);
 	}
 
+	@PutMapping("/redact")
+	public ResponseEntity<?> redactFieldsFromPayload(@RequestParam("id") Long id,
+			@RequestParam("fields") String fields) {
+		log.info("Request received: PUT /audit/redact id={} fields={}", id, fields);
+		if (id == null || id <= 0) {
+			log.error("Invalid redact id input: {}", id);
+			return error(HttpStatus.BAD_REQUEST, "id must be a positive integer", null);
+		}
+		if (fields == null || fields.isBlank()) {
+			log.error("Invalid redact fields input");
+			return error(HttpStatus.BAD_REQUEST, "fields is required", null);
+		}
+		Event redacted = eventService.redactFieldsFromPayload(id, fields);
+		log.info("Response status={} eventId={}", HttpStatus.OK.value(), redacted.getId());
+		return ResponseEntity.ok(redacted);
+	}
+
 	@ExceptionHandler(MethodArgumentNotValidException.class)
 	public ResponseEntity<Map<String, Object>> handleValidation(MethodArgumentNotValidException ex) {
 		Map<String, String> fieldErrors = ex.getBindingResult().getFieldErrors().stream()
@@ -115,6 +134,18 @@ public class AuditLogsController {
 	public ResponseEntity<Map<String, Object>> handleBadRequest(Exception ex) {
 		log.error("Bad request exception: {}", ex.getMessage(), ex);
 		return error(HttpStatus.BAD_REQUEST, ex.getMessage(), null);
+	}
+
+	@ExceptionHandler(IllegalArgumentException.class)
+	public ResponseEntity<Map<String, Object>> handleIllegalArgument(IllegalArgumentException ex) {
+		log.error("Illegal argument: {}", ex.getMessage(), ex);
+		return error(HttpStatus.BAD_REQUEST, ex.getMessage(), null);
+	}
+
+	@ExceptionHandler(NoSuchElementException.class)
+	public ResponseEntity<Map<String, Object>> handleNotFound(NoSuchElementException ex) {
+		log.error("Resource not found: {}", ex.getMessage(), ex);
+		return error(HttpStatus.NOT_FOUND, ex.getMessage(), null);
 	}
 
 	private ResponseEntity<Map<String, Object>> error(HttpStatus status, String message, Map<String, String> fields) {

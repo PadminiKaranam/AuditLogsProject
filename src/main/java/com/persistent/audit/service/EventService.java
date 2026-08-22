@@ -1,12 +1,10 @@
 package com.persistent.audit.service;
 
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
-import java.util.HexFormat;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.NoSuchElementException;
 import java.util.Objects;
 
 import org.springframework.data.domain.Page;
@@ -16,6 +14,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
+import com.persistent.audit.crypto.PayloadMerkleHasher;
 import com.persistent.audit.model.ChainVerificationResult;
 import com.persistent.audit.model.Event;
 import com.persistent.audit.model.EventCreateResponseObject;
@@ -44,11 +43,11 @@ public class EventService {
 		Instant timestamp = Instant.now();
 		String normalizedPayload = StringUtils.hasText(payload) ? payload : "{}";
 		String previousHash = eventRepository.findTopByOrderByIdDesc()
-				.map(Event::getHash)
+				.map(this::computeHash)
 				.orElse(null);
 		log.debug("Hashing event with previousHash={}", previousHash);
-		String hash = computeHash(eventType, actorId, resourceType, resourceId, normalizedPayload, timestamp,
-				previousHash);
+		String sealedPayload = PayloadMerkleHasher.seal(normalizedPayload);
+		String hash = computeHash(eventType, actorId, resourceType, resourceId, sealedPayload, timestamp, previousHash);
 		log.debug("Computed hash={}", hash);
 
 		Event event = new Event();
@@ -56,7 +55,7 @@ public class EventService {
 		event.setActorId(actorId);
 		event.setResourceType(resourceType);
 		event.setResourceId(resourceId);
-		event.setPayload(normalizedPayload);
+		event.setPayload(sealedPayload);
 		event.setTimestamp(timestamp);
 		event.setHash(hash);
 		event.setPreviousHash(previousHash);
@@ -131,6 +130,38 @@ public class EventService {
 		return new RetentionCheckResult(days, archivedCount);
 	}
 
+	@Transactional
+	public Event redactFieldsFromPayload(Long id, String fields) {
+		if (id == null) {
+			throw new IllegalArgumentException("id is required");
+		}
+		if (!StringUtils.hasText(fields)) {
+			throw new IllegalArgumentException("fields is required");
+		}
+		List<String> keys = parseFieldKeys(fields);
+		if (keys.isEmpty()) {
+			throw new IllegalArgumentException("fields must contain at least one payload key");
+		}
+		log.info("Redacting payload fields eventId={} fieldCount={}", id, keys.size());
+		Event event = eventRepository.findById(id)
+				.orElseThrow(() -> new NoSuchElementException("Event not found for id=" + id));
+		event.setPayload(PayloadMerkleHasher.redact(event.getPayload(), keys));
+		Event saved = eventRepository.save(event);
+		log.info("Redaction completed eventId={} hash unchanged", saved.getId());
+		return saved;
+	}
+
+	private List<String> parseFieldKeys(String fields) {
+		List<String> keys = new ArrayList<>();
+		for (String token : fields.split(",")) {
+			String key = token.trim();
+			if (StringUtils.hasText(key) && !keys.contains(key)) {
+				keys.add(key);
+			}
+		}
+		return keys;
+	}
+
 	private boolean hasFilters(String eventType, String actorId, String resourceType, String resourceId,
 			Instant fromTimestamp, Instant toTimestamp) {
 		return StringUtils.hasText(eventType)
@@ -145,22 +176,20 @@ public class EventService {
 		return StringUtils.hasText(value) ? value : null;
 	}
 
+	private String computeHash(Event event) {
+		return computeHash(event.getEventType(), event.getActorId(), event.getResourceType(), event.getResourceId(),
+				event.getPayload(), event.getTimestamp(), event.getPreviousHash());
+	}
+
 	private String computeHash(String eventType, String actorId, String resourceType, String resourceId,
 			String payload, Instant timestamp, String previousHash) {
-		String canonical = eventType + "|"
-				+ actorId + "|"
-				+ resourceType + "|"
-				+ resourceId + "|"
-				+ payload + "|"
-				+ timestamp + "|"
-				+ (previousHash != null ? previousHash : "");
 		try {
-			MessageDigest digest = MessageDigest.getInstance("SHA-256");
-			byte[] hashed = digest.digest(canonical.getBytes(StandardCharsets.UTF_8));
-			return HexFormat.of().formatHex(hashed);
-		} catch (NoSuchAlgorithmException e) {
+			String payloadRootHash = PayloadMerkleHasher.payloadRootFromPayload(payload);
+			return PayloadMerkleHasher.computeEventHash(eventType, actorId, resourceType, resourceId, payloadRootHash,
+					timestamp, previousHash);
+		} catch (RuntimeException e) {
 			log.error("Error while hashing event eventType={} actorId={}", eventType, actorId, e);
-			throw new IllegalStateException("SHA-256 is not available", e);
+			throw e;
 		}
 	}
 }

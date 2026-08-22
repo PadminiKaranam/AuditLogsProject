@@ -16,6 +16,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import java.time.Instant;
 import java.util.List;
+import java.util.NoSuchElementException;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -33,6 +34,7 @@ import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.validation.beanvalidation.LocalValidatorFactoryBean;
 
 import com.persistent.audit.model.ChainVerificationResult;
+import com.persistent.audit.model.Event;
 import com.persistent.audit.model.EventCreateResponseObject;
 import com.persistent.audit.model.RetentionCheckResult;
 import com.persistent.audit.service.EventService;
@@ -184,5 +186,67 @@ class AuditLogsControllerTest {
 				.andExpect(status().isBadRequest());
 
 		verify(eventService, never()).checkForRetention(anyInt());
+	}
+
+	@Test
+	void redact_returnsOkEvent() throws Exception {
+		Event event = new Event();
+		event.setId(8L);
+		event.setEventType("LOGIN");
+		event.setActorId("actor-1");
+		event.setResourceType("SESSION");
+		event.setResourceId("s-8");
+		event.setPayload("{\"account\":null,\"name\":\"Alice\"}");
+		event.setHash("abc");
+		when(eventService.redactFieldsFromPayload(8L, "account")).thenReturn(event);
+
+		mockMvc.perform(put("/audit/redact").param("id", "8").param("fields", "account"))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.id").value(8))
+				.andExpect(jsonPath("$.payload").value("{\"account\":null,\"name\":\"Alice\"}"));
+
+		verify(eventService).redactFieldsFromPayload(8L, "account");
+	}
+
+	@Test
+	void redact_missingIdReturnsBadRequest() throws Exception {
+		mockMvc.perform(put("/audit/redact").param("fields", "account"))
+				.andExpect(status().isBadRequest());
+	}
+
+	@Test
+	void redact_nonIntegerIdReturnsBadRequest() throws Exception {
+		mockMvc.perform(put("/audit/redact").param("id", "abc").param("fields", "account"))
+				.andExpect(status().isBadRequest());
+	}
+
+	@Test
+	void redact_nonPositiveIdReturnsBadRequest() throws Exception {
+		mockMvc.perform(put("/audit/redact").param("id", "0").param("fields", "account"))
+				.andExpect(status().isBadRequest());
+	}
+
+	@Test
+	void redact_blankFieldsReturnsBadRequest() throws Exception {
+		mockMvc.perform(put("/audit/redact").param("id", "1").param("fields", "   "))
+				.andExpect(status().isBadRequest());
+	}
+
+	@Test
+	void redact_unknownEventReturnsNotFound() throws Exception {
+		when(eventService.redactFieldsFromPayload(44L, "account"))
+				.thenThrow(new NoSuchElementException("Event not found for id=44"));
+
+		mockMvc.perform(put("/audit/redact").param("id", "44").param("fields", "account"))
+				.andExpect(status().isNotFound());
+	}
+
+	@Test
+	void redact_unknownPayloadFieldReturnsBadRequest() throws Exception {
+		when(eventService.redactFieldsFromPayload(1L, "missing"))
+				.thenThrow(new IllegalArgumentException("payload does not contain field: missing"));
+
+		mockMvc.perform(put("/audit/redact").param("id", "1").param("fields", "missing"))
+				.andExpect(status().isBadRequest());
 	}
 }

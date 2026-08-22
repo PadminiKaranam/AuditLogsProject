@@ -1,6 +1,7 @@
 package com.persistent.audit.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
@@ -13,6 +14,8 @@ import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.NoSuchElementException;
 import java.util.Optional;
 
 import org.junit.jupiter.api.BeforeEach;
@@ -27,6 +30,7 @@ import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 
+import com.persistent.audit.crypto.PayloadMerkleHasher;
 import com.persistent.audit.model.ChainVerificationResult;
 import com.persistent.audit.model.Event;
 import com.persistent.audit.model.EventCreateResponseObject;
@@ -73,8 +77,8 @@ class EventServiceTest {
 	}
 
 	@Test
-	void createEvent_linksPreviousHashFromLatestEvent() {
-		Event previous = event(1L, "h-prev", null);
+	void createEvent_linksPreviousHashByRecomputingLatestEvent() {
+		Event previous = committedEvent(1L, "{\"name\":\"Alice\"}", null);
 		when(eventRepository.findTopByOrderByIdDesc()).thenReturn(Optional.of(previous));
 		when(eventRepository.save(any(Event.class))).thenAnswer(invocation -> {
 			Event event = invocation.getArgument(0);
@@ -86,8 +90,8 @@ class EventServiceTest {
 
 		ArgumentCaptor<Event> captor = ArgumentCaptor.forClass(Event.class);
 		verify(eventRepository).save(captor.capture());
-		assertThat(captor.getValue().getPreviousHash()).isEqualTo("h-prev");
-		assertThat(captor.getValue().getHash()).isNotEqualTo("h-prev");
+		assertThat(captor.getValue().getPreviousHash()).isEqualTo(previous.getHash());
+		assertThat(captor.getValue().getHash()).isNotEqualTo(previous.getHash());
 	}
 
 	@Test
@@ -128,6 +132,131 @@ class EventServiceTest {
 		assertThat(result.getId()).isEqualTo(9L);
 		assertThat(result.getPayload()).isEqualTo("{}");
 		assertThat(result).hasNoNullFieldsOrPropertiesExcept();
+	}
+
+	@Test
+	void createEvent_computesMerkleEventHashFromPayloadRootNotRawJson() {
+		when(eventRepository.findTopByOrderByIdDesc()).thenReturn(Optional.empty());
+		when(eventRepository.save(any(Event.class))).thenAnswer(invocation -> invocation.getArgument(0));
+		String payload = "{\"account\":\"12345\",\"name\":\"Alice\"}";
+
+		eventService.createEvent("LOGIN", "actor-1", "SESSION", "s-1", payload);
+
+		ArgumentCaptor<Event> captor = ArgumentCaptor.forClass(Event.class);
+		verify(eventRepository).save(captor.capture());
+		Event saved = captor.getValue();
+		var payloadNode = PayloadMerkleHasher.parseObject(saved.getPayload());
+		Map<String, String> salts = PayloadMerkleHasher.nestedStringMap(payloadNode, PayloadMerkleHasher.SALTS_KEY);
+		Map<String, String> leaves = PayloadMerkleHasher.nestedStringMap(payloadNode, PayloadMerkleHasher.LEAVES_KEY);
+		assertThat(salts).containsOnlyKeys("account", "name");
+		assertThat(leaves).containsOnlyKeys("account", "name");
+		assertThat(salts.get("account")).isNotBlank();
+		assertThat(leaves.get("name")).isEqualTo(PayloadMerkleHasher.leafHash("name", "Alice", salts.get("name")));
+		String root = PayloadMerkleHasher.payloadRootFromPayload(saved.getPayload());
+		assertThat(saved.getHash()).isEqualTo(PayloadMerkleHasher.computeEventHash(
+				"LOGIN", "actor-1", "SESSION", "s-1", root, saved.getTimestamp(), null));
+		assertThat(saved.getHash()).hasSize(64);
+		assertThat(payloadNode.get("name").asString()).isEqualTo("Alice");
+	}
+
+	@Test
+	void createEvent_rejectsInvalidPayloadJson() {
+		when(eventRepository.findTopByOrderByIdDesc()).thenReturn(Optional.empty());
+
+		assertThatThrownBy(() -> eventService.createEvent("LOGIN", "actor-1", "SESSION", "s-1", "{not-json"))
+				.isInstanceOf(IllegalArgumentException.class)
+				.hasMessageContaining("JSON");
+		verify(eventRepository, never()).save(any(Event.class));
+	}
+
+	@Test
+	void createEvent_rejectsJsonArrayPayload() {
+		when(eventRepository.findTopByOrderByIdDesc()).thenReturn(Optional.empty());
+
+		assertThatThrownBy(() -> eventService.createEvent("LOGIN", "actor-1", "SESSION", "s-1", "[1,2]"))
+				.isInstanceOf(IllegalArgumentException.class)
+				.hasMessageContaining("JSON object");
+	}
+
+	@Test
+	void redactFieldsFromPayload_nullsValueRemovesSaltKeepsLeafHashAndEventHash() {
+		Event stored = committedEvent(7L, "{\"name\":\"Alice\",\"account\":\"12345\"}", null);
+		String originalHash = stored.getHash();
+		String accountLeaf = PayloadMerkleHasher.nestedStringMap(
+				PayloadMerkleHasher.parseObject(stored.getPayload()), PayloadMerkleHasher.LEAVES_KEY).get("account");
+		when(eventRepository.findById(7L)).thenReturn(Optional.of(stored));
+		when(eventRepository.save(any(Event.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+		Event result = eventService.redactFieldsFromPayload(7L, "account");
+
+		var payload = PayloadMerkleHasher.parseObject(result.getPayload());
+		assertThat(payload.get("account").isNull()).isTrue();
+		assertThat(payload.get("name").asString()).isEqualTo("Alice");
+		assertThat(PayloadMerkleHasher.nestedStringMap(payload, PayloadMerkleHasher.SALTS_KEY)).doesNotContainKey("account");
+		assertThat(PayloadMerkleHasher.nestedStringMap(payload, PayloadMerkleHasher.SALTS_KEY)).containsKey("name");
+		assertThat(PayloadMerkleHasher.nestedStringMap(payload, PayloadMerkleHasher.LEAVES_KEY).get("account"))
+				.isEqualTo(accountLeaf);
+		assertThat(result.getHash()).isEqualTo(originalHash);
+		assertThat(PayloadMerkleHasher.payloadRootFromPayload(result.getPayload()))
+				.isEqualTo(PayloadMerkleHasher.payloadRootFromPayload(stored.getPayload()));
+		assertThat(result.getPreviousHash()).isNull();
+	}
+
+	@Test
+	void redactFieldsFromPayload_multipleKeysAndWhitespace() {
+		Event stored = committedEvent(3L, "{\"name\":\"Alice\",\"account\":\"12345\",\"ssn\":\"999\"}", "prev");
+		when(eventRepository.findById(3L)).thenReturn(Optional.of(stored));
+		when(eventRepository.save(any(Event.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+		Event result = eventService.redactFieldsFromPayload(3L, " account , ssn ");
+
+		assertThat(PayloadMerkleHasher.parseObject(result.getPayload()).get("account").isNull()).isTrue();
+		assertThat(PayloadMerkleHasher.parseObject(result.getPayload()).get("ssn").isNull()).isTrue();
+		assertThat(PayloadMerkleHasher.parseObject(result.getPayload()).get("name").asString()).isEqualTo("Alice");
+		assertThat(result.getPreviousHash()).isEqualTo("prev");
+	}
+
+	@Test
+	void redactFieldsFromPayload_missingEventThrows() {
+		when(eventRepository.findById(99L)).thenReturn(Optional.empty());
+
+		assertThatThrownBy(() -> eventService.redactFieldsFromPayload(99L, "account"))
+				.isInstanceOf(NoSuchElementException.class);
+	}
+
+	@Test
+	void redactFieldsFromPayload_missingPayloadKeyThrows() {
+		Event stored = committedEvent(1L, "{\"name\":\"Alice\"}", null);
+		when(eventRepository.findById(1L)).thenReturn(Optional.of(stored));
+
+		assertThatThrownBy(() -> eventService.redactFieldsFromPayload(1L, "account"))
+				.isInstanceOf(IllegalArgumentException.class)
+				.hasMessageContaining("account");
+		verify(eventRepository, never()).save(any(Event.class));
+	}
+
+	@Test
+	void redactFieldsFromPayload_blankFieldsThrows() {
+		assertThatThrownBy(() -> eventService.redactFieldsFromPayload(1L, " , , "))
+				.isInstanceOf(IllegalArgumentException.class);
+		assertThatThrownBy(() -> eventService.redactFieldsFromPayload(null, "account"))
+				.isInstanceOf(IllegalArgumentException.class);
+	}
+
+	@Test
+	void redactFieldsFromPayload_doesNotBreakChainVerification() {
+		Event first = committedEvent(1L, "{\"name\":\"Alice\",\"account\":\"12345\"}", null);
+		Event second = committedEvent(2L, "{\"name\":\"Bob\"}", first.getHash());
+		when(eventRepository.findById(1L)).thenReturn(Optional.of(first));
+		when(eventRepository.save(any(Event.class))).thenAnswer(invocation -> invocation.getArgument(0));
+		when(eventRepository.findAll(any(Sort.class))).thenReturn(List.of(first, second));
+
+		assertThat(eventService.verifyChain().getFirstInvalidRecordId()).isNull();
+		eventService.redactFieldsFromPayload(1L, "account");
+		assertThat(first.getHash()).isNotBlank();
+		assertThat(second.getPreviousHash()).isEqualTo(first.getHash());
+		assertThat(eventService.verifyChain().getFirstInvalidRecordId()).isNull();
+		assertThat(eventService.verifyChain().getViolationDescription()).isNull();
 	}
 
 	@Test
@@ -361,6 +490,16 @@ class EventServiceTest {
 		event.setHash(hash);
 		event.setPreviousHash(previousHash);
 		event.setStatus(EventStatus.ACTIVE);
+		return event;
+	}
+
+	private Event committedEvent(Long id, String payload, String previousHash) {
+		Event event = event(id, "placeholder", previousHash);
+		String sealed = PayloadMerkleHasher.seal(payload);
+		event.setPayload(sealed);
+		event.setHash(PayloadMerkleHasher.computeEventHash(
+				event.getEventType(), event.getActorId(), event.getResourceType(), event.getResourceId(),
+				PayloadMerkleHasher.payloadRootFromPayload(sealed), event.getTimestamp(), previousHash));
 		return event;
 	}
 
