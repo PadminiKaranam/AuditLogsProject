@@ -13,6 +13,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
 import com.persistent.audit.model.Event;
+import com.persistent.audit.model.EventCreateResponseObject;
 import com.persistent.audit.repository.EventRepository;
 import com.persistent.audit.util.PaginationUtils;
 
@@ -26,8 +27,8 @@ public class EventService {
 	}
 
 	@Transactional
-	public Event createEvent(String eventType, String actorId, String resourceType, String resourceId,
-			String payload) {
+	public EventCreateResponseObject createEvent(String eventType, String actorId, String resourceType,
+			String resourceId, String payload) {
 		Instant timestamp = Instant.now();
 		String normalizedPayload = StringUtils.hasText(payload) ? payload : "{}";
 		String previousHash = eventRepository.findTopByOrderByIdDesc()
@@ -45,21 +46,22 @@ public class EventService {
 		event.setTimestamp(timestamp);
 		event.setHash(hash);
 		event.setPreviousHash(previousHash);
-		return eventRepository.save(event);
+		return EventCreateResponseObject.from(eventRepository.save(event));
 	}
 
 	@Transactional(readOnly = true)
-	public Page<Event> getEvents(String eventType, String actorId, String resourceType, String resourceId,
-			Instant fromTimestamp, Instant toTimestamp) {
+	public Page<EventCreateResponseObject> getEvents(String eventType, String actorId, String resourceType,
+			String resourceId, Instant fromTimestamp, Instant toTimestamp) {
 		return getEvents(eventType, actorId, resourceType, resourceId, fromTimestamp, toTimestamp, 0);
 	}
 
 	@Transactional(readOnly = true)
-	public Page<Event> getEvents(String eventType, String actorId, String resourceType, String resourceId,
-			Instant fromTimestamp, Instant toTimestamp, int page) {
+	public Page<EventCreateResponseObject> getEvents(String eventType, String actorId, String resourceType,
+			String resourceId, Instant fromTimestamp, Instant toTimestamp, int page) {
 		Pageable pageable = PaginationUtils.pageRequest(page);
+		Page<Event> events;
 		if (hasFilters(eventType, actorId, resourceType, resourceId, fromTimestamp, toTimestamp)) {
-			return eventRepository.findEvents(
+			events = eventRepository.findEvents(
 					blankToNull(eventType),
 					blankToNull(actorId),
 					blankToNull(resourceType),
@@ -67,8 +69,10 @@ public class EventService {
 					fromTimestamp,
 					toTimestamp,
 					pageable);
+		} else {
+			events = eventRepository.findAll(pageable);
 		}
-		return eventRepository.findAll(pageable);
+		return events.map(EventCreateResponseObject::from);
 	}
 
 	private boolean hasFilters(String eventType, String actorId, String resourceType, String resourceId,

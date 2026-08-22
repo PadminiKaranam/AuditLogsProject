@@ -71,4 +71,15 @@ public class Event {
 			this.timestamp = Instant.now();
 		}
 	}
+
+	public Event(String eventType, String actorId, String resourceType, String resourceId,
+		String payload, String hash, String previousHash) {
+	this.eventType = eventType;
+	this.actorId = actorId;
+	this.resourceType = resourceType;
+	this.resourceId = resourceId;
+	this.payload = payload;
+	this.hash = hash;
+	this.previousHash = previousHash;
+}
 }

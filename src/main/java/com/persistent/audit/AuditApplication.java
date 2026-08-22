@@ -1,4 +1,4 @@
-package com.persistent;
+package com.persistent.audit;
 
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
