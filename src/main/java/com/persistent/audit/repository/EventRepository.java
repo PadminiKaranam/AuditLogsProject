@@ -1,6 +1,7 @@
 package com.persistent.audit.repository;
 
 import java.time.Instant;
+import java.util.List;
 import java.util.Optional;
 
 import org.springframework.data.domain.Page;
@@ -10,10 +11,13 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import com.persistent.audit.model.Event;
+import com.persistent.audit.model.EventStatus;
 
 public interface EventRepository extends JpaRepository<Event, Long> {
 
 	Optional<Event> findTopByOrderByIdDesc();
+
+	List<Event> findByStatus(EventStatus status);
 
 	@Query("""
 			SELECT e FROM Event e

@@ -4,6 +4,8 @@ import java.time.Instant;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
@@ -65,10 +67,18 @@ public class Event {
 	@Column(name = "previous_hash", length = 128)
 	private String previousHash;
 
+	@NotNull
+	@Enumerated(EnumType.STRING)
+	@Column(name = "status", nullable = false, length = 20)
+	private EventStatus status = EventStatus.ACTIVE;
+
 	@PrePersist
 	protected void assignServerTimestamp() {
 		if (this.timestamp == null) {
 			this.timestamp = Instant.now();
+		}
+		if (this.status == null) {
+			this.status = EventStatus.ACTIVE;
 		}
 	}
 

@@ -1,4 +1,6 @@
-###Prompt- 1:
+Scenario-A
+
+### Prompt- 1:
 Create a table using H2 (Entity Model):
 
 1. Add all the required properties related to h2 file-based db, JPA in application.properties
@@ -23,7 +25,7 @@ Modifications:
 
 
 
-###Prompt- 2:
+### Prompt- 2:
 Create a JPA repository for the Event entity:
 
 1. Package: com.persistent.audit.repository
@@ -67,7 +69,7 @@ Justification:
 
 
 
-###Prompt- 3:
+### Prompt- 3:
 
 Create a service class for Event management:
 
@@ -84,7 +86,7 @@ Create a service class for Event management:
 
 
 
-###Prompt- 4:
+### Prompt- 4:
 Adding the endpoints in the controller:
 
  Change the package of AuditLogsController to com.persistent.audit.controller
@@ -108,7 +110,7 @@ This is an append-only audit log. Do NOT create any PUT, PATCH, or DELETE endpoi
 4. Do not change any logic in the service layer for getEvents method and pagination related logic. Only change the return type of the getEvents method such that it returns page<EventCreateResponseObject>
 
 
-###Prompt- 5:
+### Prompt- 5:
 
 Create a new GET /audit/verify endpoint in the existing controller class:
 - Do not change the existing code
@@ -123,7 +125,7 @@ Create a new GET /audit/verify endpoint in the existing controller class:
 
 
 
-###Prompt- 6:
+### Prompt- 6:
 ADD LOGGING and unit testcases (Without Changing Existing Logic)
 1. Logging requirements:
    - Use @Slf4j (Lombok)
@@ -140,3 +142,31 @@ ADD LOGGING and unit testcases (Without Changing Existing Logic)
    - Configure log levels (INFO for prod, DEBUG and error for dev)
    - Add file logging configuration (logs in ./logs/audit-events.log)
 5. And also add unit testcases without changing the existing code including all the edge case scenarios like pagination (what if more than 10 records), chainVerification (what if there is only one record) and many more like this using junit and Mockito and also execute all the testcases and they should pass 
+
+
+
+
+
+Scenario-B
+
+### Prompt-1:
+Act as a Senior Backend Engineer. 
+
+I need you to extend this existing audit-log-service tamper-evident system to support a data retention policy without breaking event chain verification.
+
+### Context
+In Scenario A, we built a sequentially linked events where each event contains PreviousHash, and Hash. 
+We are now introducing Scenario B: records older than a configurable window (e.g., 90 days) must delete the events, but the system must still verify the overall integrity of the chain.
+
+### Technical Requirements
+1. Controller changes: Create PUT - /audit/checkForRetention endpoint which accepts no.of days as an input. Validate this that it should be an integer otherwise throw BAD Request. Pass this field(days) to the service layer.
+2. Schema Extension: Update the Event model to include a `status` field (which will have either ACTIVE or ARCHIVED)
+3. Retention Worker: Write a method in already existing service layer that does the following:
+   - Retrieve the events from the Event table whose newly added 'status' files is 'ACTIVE'
+   - Check if the value of the timestamp field of the event is older than 90 days from todays date
+   - If yes, then update the value of status field to 'ARCHIVED'
+4. Do not change any logic for calculating hash code or verify endpoint. The chain linking should still be the same irrespective of the value of status field.
+5. Add the unit testcases for this endpoint by inserting mocked data into Event table:
+   - Include testcases for invalid days input, valid days input, and check for the value of status field
+   - Include the testcase to check for the chain of the events before and after retention.
+   - verify whether all the testcases are getting passed

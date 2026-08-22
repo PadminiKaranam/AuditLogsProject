@@ -2,12 +2,15 @@ package com.persistent.audit.controller;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -31,6 +34,7 @@ import org.springframework.validation.beanvalidation.LocalValidatorFactoryBean;
 
 import com.persistent.audit.model.ChainVerificationResult;
 import com.persistent.audit.model.EventCreateResponseObject;
+import com.persistent.audit.model.RetentionCheckResult;
 import com.persistent.audit.service.EventService;
 
 @ExtendWith(MockitoExtension.class)
@@ -142,5 +146,43 @@ class AuditLogsControllerTest {
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.firstInvalidRecordId").value(4))
 				.andExpect(jsonPath("$.violationDescription").value("HASH MISMATCH"));
+	}
+
+	@Test
+	void checkForRetention_validDaysReturnsOk() throws Exception {
+		when(eventService.checkForRetention(90)).thenReturn(new RetentionCheckResult(90, 2));
+
+		mockMvc.perform(put("/audit/checkForRetention").param("days", "90"))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.days").value(90))
+				.andExpect(jsonPath("$.archivedCount").value(2));
+
+		verify(eventService).checkForRetention(90);
+	}
+
+	@Test
+	void checkForRetention_nonIntegerDaysReturnsBadRequest() throws Exception {
+		mockMvc.perform(put("/audit/checkForRetention").param("days", "ninety"))
+				.andExpect(status().isBadRequest());
+
+		verify(eventService, never()).checkForRetention(anyInt());
+	}
+
+	@Test
+	void checkForRetention_missingDaysReturnsBadRequest() throws Exception {
+		mockMvc.perform(put("/audit/checkForRetention"))
+				.andExpect(status().isBadRequest());
+
+		verify(eventService, never()).checkForRetention(anyInt());
+	}
+
+	@Test
+	void checkForRetention_nonPositiveDaysReturnsBadRequest() throws Exception {
+		mockMvc.perform(put("/audit/checkForRetention").param("days", "0"))
+				.andExpect(status().isBadRequest());
+		mockMvc.perform(put("/audit/checkForRetention").param("days", "-5"))
+				.andExpect(status().isBadRequest());
+
+		verify(eventService, never()).checkForRetention(anyInt());
 	}
 }

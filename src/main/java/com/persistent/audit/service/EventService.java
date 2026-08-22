@@ -4,6 +4,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Objects;
@@ -18,6 +19,8 @@ import org.springframework.util.StringUtils;
 import com.persistent.audit.model.ChainVerificationResult;
 import com.persistent.audit.model.Event;
 import com.persistent.audit.model.EventCreateResponseObject;
+import com.persistent.audit.model.EventStatus;
+import com.persistent.audit.model.RetentionCheckResult;
 import com.persistent.audit.repository.EventRepository;
 import com.persistent.audit.util.PaginationUtils;
 
@@ -57,6 +60,7 @@ public class EventService {
 		event.setTimestamp(timestamp);
 		event.setHash(hash);
 		event.setPreviousHash(previousHash);
+		event.setStatus(EventStatus.ACTIVE);
 		EventCreateResponseObject saved = EventCreateResponseObject.from(eventRepository.save(event));
 		log.info("Saved event id={} hash computed successfully", saved.getId());
 		return saved;
@@ -107,6 +111,24 @@ public class EventService {
 		}
 		log.info("Chain verification completed with no mismatches");
 		return new ChainVerificationResult();
+	}
+
+	@Transactional
+	public RetentionCheckResult checkForRetention(int days) {
+		log.info("Checking retention policy days={}", days);
+		Instant cutoff = Instant.now().minus(days, ChronoUnit.DAYS);
+		List<Event> activeEvents = eventRepository.findByStatus(EventStatus.ACTIVE);
+		int archivedCount = 0;
+		for (Event event : activeEvents) {
+			if (event.getTimestamp() != null && event.getTimestamp().isBefore(cutoff)) {
+				event.setStatus(EventStatus.ARCHIVED);
+				eventRepository.save(event);
+				archivedCount++;
+				log.debug("Archived event id={} timestamp={}", event.getId(), event.getTimestamp());
+			}
+		}
+		log.info("Retention check completed days={} archivedCount={}", days, archivedCount);
+		return new RetentionCheckResult(days, archivedCount);
 	}
 
 	private boolean hasFilters(String eventType, String actorId, String resourceType, String resourceId,

@@ -10,9 +10,11 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -22,6 +24,7 @@ import org.springframework.web.method.annotation.MethodArgumentTypeMismatchExcep
 import com.persistent.audit.model.ChainVerificationResult;
 import com.persistent.audit.model.EventCreateRequest;
 import com.persistent.audit.model.EventCreateResponseObject;
+import com.persistent.audit.model.RetentionCheckResult;
 import com.persistent.audit.service.EventService;
 
 import jakarta.validation.Valid;
@@ -83,6 +86,18 @@ public class AuditLogsController {
 		return ResponseEntity.ok(result);
 	}
 
+	@PutMapping("/checkForRetention")
+	public ResponseEntity<?> checkForRetention(@RequestParam("days") Integer days) {
+		log.info("Request received: PUT /audit/checkForRetention days={}", days);
+		if (days == null || days <= 0) {
+			log.error("Invalid retention days input: {}", days);
+			return error(HttpStatus.BAD_REQUEST, "days must be a positive integer", null);
+		}
+		RetentionCheckResult result = eventService.checkForRetention(days);
+		log.info("Response status={} archivedCount={}", HttpStatus.OK.value(), result.getArchivedCount());
+		return ResponseEntity.ok(result);
+	}
+
 	@ExceptionHandler(MethodArgumentNotValidException.class)
 	public ResponseEntity<Map<String, Object>> handleValidation(MethodArgumentNotValidException ex) {
 		Map<String, String> fieldErrors = ex.getBindingResult().getFieldErrors().stream()
@@ -95,7 +110,8 @@ public class AuditLogsController {
 		return error(HttpStatus.BAD_REQUEST, "Validation failed", fieldErrors);
 	}
 
-	@ExceptionHandler({ HttpMessageNotReadableException.class, MethodArgumentTypeMismatchException.class })
+	@ExceptionHandler({ HttpMessageNotReadableException.class, MethodArgumentTypeMismatchException.class,
+			MissingServletRequestParameterException.class })
 	public ResponseEntity<Map<String, Object>> handleBadRequest(Exception ex) {
 		log.error("Bad request exception: {}", ex.getMessage(), ex);
 		return error(HttpStatus.BAD_REQUEST, ex.getMessage(), null);

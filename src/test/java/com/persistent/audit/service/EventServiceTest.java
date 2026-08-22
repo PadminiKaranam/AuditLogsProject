@@ -5,10 +5,12 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -28,6 +30,8 @@ import org.springframework.data.domain.Sort;
 import com.persistent.audit.model.ChainVerificationResult;
 import com.persistent.audit.model.Event;
 import com.persistent.audit.model.EventCreateResponseObject;
+import com.persistent.audit.model.EventStatus;
+import com.persistent.audit.model.RetentionCheckResult;
 import com.persistent.audit.repository.EventRepository;
 import com.persistent.audit.util.PaginationUtils;
 
@@ -63,6 +67,7 @@ class EventServiceTest {
 		Event saved = captor.getValue();
 		assertThat(saved.getPreviousHash()).isNull();
 		assertThat(saved.getHash()).isNotBlank();
+		assertThat(saved.getStatus()).isEqualTo(EventStatus.ACTIVE);
 		assertThat(result.getId()).isEqualTo(1L);
 		assertThat(result.getEventType()).isEqualTo("LOGIN");
 	}
@@ -281,6 +286,69 @@ class EventServiceTest {
 		assertThat(result.getViolationDescription()).isEqualTo("HASH MISMATCH");
 	}
 
+	@Test
+	void checkForRetention_archivesOnlyActiveEventsOlderThanDays() {
+		Event oldEvent = event(1L, "h1", null);
+		oldEvent.setTimestamp(Instant.now().minus(100, ChronoUnit.DAYS));
+		Event recentEvent = event(2L, "h2", "h1");
+		recentEvent.setTimestamp(Instant.now().minus(10, ChronoUnit.DAYS));
+		when(eventRepository.findByStatus(EventStatus.ACTIVE)).thenReturn(List.of(oldEvent, recentEvent));
+		when(eventRepository.save(any(Event.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+		RetentionCheckResult result = eventService.checkForRetention(90);
+
+		assertThat(result.getDays()).isEqualTo(90);
+		assertThat(result.getArchivedCount()).isEqualTo(1);
+		assertThat(oldEvent.getStatus()).isEqualTo(EventStatus.ARCHIVED);
+		assertThat(recentEvent.getStatus()).isEqualTo(EventStatus.ACTIVE);
+		assertThat(oldEvent.getHash()).isEqualTo("h1");
+		assertThat(oldEvent.getPreviousHash()).isNull();
+		verify(eventRepository, times(1)).save(oldEvent);
+		verify(eventRepository, never()).save(recentEvent);
+	}
+
+	@Test
+	void checkForRetention_doesNotReprocessAlreadyArchivedEvents() {
+		when(eventRepository.findByStatus(EventStatus.ACTIVE)).thenReturn(List.of());
+
+		RetentionCheckResult result = eventService.checkForRetention(90);
+
+		assertThat(result.getArchivedCount()).isZero();
+		verify(eventRepository, never()).save(any(Event.class));
+	}
+
+	@Test
+	void checkForRetention_validDaysKeepsChainIntactBeforeAndAfter() {
+		Event first = event(1L, "h1", null);
+		first.setTimestamp(Instant.now().minus(120, ChronoUnit.DAYS));
+		Event second = event(2L, "h2", "h1");
+		second.setTimestamp(Instant.now().minus(100, ChronoUnit.DAYS));
+		Event third = event(3L, "h3", "h2");
+		third.setTimestamp(Instant.now().minus(5, ChronoUnit.DAYS));
+		List<Event> chain = List.of(first, second, third);
+
+		when(eventRepository.findAll(any(Sort.class))).thenReturn(chain);
+		ChainVerificationResult before = eventService.verifyChain();
+		assertThat(before.getFirstInvalidRecordId()).isNull();
+		assertThat(before.getViolationDescription()).isNull();
+
+		when(eventRepository.findByStatus(EventStatus.ACTIVE)).thenReturn(chain);
+		when(eventRepository.save(any(Event.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+		RetentionCheckResult retention = eventService.checkForRetention(90);
+
+		assertThat(retention.getArchivedCount()).isEqualTo(2);
+		assertThat(first.getStatus()).isEqualTo(EventStatus.ARCHIVED);
+		assertThat(second.getStatus()).isEqualTo(EventStatus.ARCHIVED);
+		assertThat(third.getStatus()).isEqualTo(EventStatus.ACTIVE);
+		assertThat(second.getPreviousHash()).isEqualTo(first.getHash());
+		assertThat(third.getPreviousHash()).isEqualTo(second.getHash());
+
+		ChainVerificationResult after = eventService.verifyChain();
+		assertThat(after.getFirstInvalidRecordId()).isNull();
+		assertThat(after.getViolationDescription()).isNull();
+	}
+
 	private Event event(Long id, String hash, String previousHash) {
 		Event event = new Event();
 		event.setId(id);
@@ -292,6 +360,7 @@ class EventServiceTest {
 		event.setTimestamp(now);
 		event.setHash(hash);
 		event.setPreviousHash(previousHash);
+		event.setStatus(EventStatus.ACTIVE);
 		return event;
 	}
 
