@@ -1,19 +1,16 @@
 package com.persistent.audit.repository;
 
 import java.time.Instant;
-import java.util.Map;
 
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
-import org.springframework.data.repository.NoRepositoryBean;
 import org.springframework.data.repository.query.Param;
 
 import com.persistent.audit.model.Event;
 
-@NoRepositoryBean
-public interface EventRepository extends JpaRepository<Event, Long> {
+public interface EventRepository extends JpaRepository<Event, Long>, EventRepositoryCustom {
 
 	@Override
 	Page<Event> findAll(Pageable pageable);
@@ -35,7 +32,4 @@ public interface EventRepository extends JpaRepository<Event, Long> {
 			@Param("fromTimestamp") Instant fromTimestamp,
 			@Param("toTimeStamp") Instant toTimeStamp,
 			Pageable pageable);
-
-	Event createEvent(String eventType, String actorId, String resourceType, String resourceId,
-			Map<String, Object> payload);
 }
