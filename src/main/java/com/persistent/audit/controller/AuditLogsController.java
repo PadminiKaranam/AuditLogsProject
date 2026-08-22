@@ -19,6 +19,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 
+import com.persistent.audit.model.ChainVerificationResult;
 import com.persistent.audit.model.EventCreateRequest;
 import com.persistent.audit.model.EventCreateResponseObject;
 import com.persistent.audit.service.EventService;
@@ -58,6 +59,11 @@ public class AuditLogsController {
 		Page<EventCreateResponseObject> events = eventService.getEvents(
 				eventType, actorId, resourceType, resourceId, fromTimestamp, toTimestamp);
 		return ResponseEntity.ok(events);
+	}
+
+	@GetMapping("/verify")
+	public ResponseEntity<ChainVerificationResult> verifyChain() {
+		return ResponseEntity.ok(eventService.verifyChain());
 	}
 
 	@ExceptionHandler(MethodArgumentNotValidException.class)

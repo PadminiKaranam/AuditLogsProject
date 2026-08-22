@@ -5,13 +5,17 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
 import java.util.HexFormat;
+import java.util.List;
+import java.util.Objects;
 
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
+import com.persistent.audit.model.ChainVerificationResult;
 import com.persistent.audit.model.Event;
 import com.persistent.audit.model.EventCreateResponseObject;
 import com.persistent.audit.repository.EventRepository;
@@ -73,6 +77,19 @@ public class EventService {
 			events = eventRepository.findAll(pageable);
 		}
 		return events.map(EventCreateResponseObject::from);
+	}
+
+	@Transactional(readOnly = true)
+	public ChainVerificationResult verifyChain() {
+		List<Event> events = eventRepository.findAll(Sort.by(Sort.Direction.ASC, "id"));
+		for (int i = 1; i < events.size(); i++) {
+			Event current = events.get(i);
+			Event previous = events.get(i - 1);
+			if (!Objects.equals(current.getPreviousHash(), previous.getHash())) {
+				return new ChainVerificationResult(current.getId(), "HASH MISMATCH");
+			}
+		}
+		return new ChainVerificationResult();
 	}
 
 	private boolean hasFilters(String eventType, String actorId, String resourceType, String resourceId,
