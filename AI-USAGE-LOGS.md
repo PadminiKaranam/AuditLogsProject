@@ -106,3 +106,17 @@ This is an append-only audit log. Do NOT create any PUT, PATCH, or DELETE endpoi
 
 3. Only change createEvent method so that it should return a EventCreateResponse Object. Create a DTO EventCreateResponseObject class in model package which contains all the firlds in the Event object except hash and previousHash fields.
 4. Do not change any logic in the service layer for getEvents method and pagination related logic. Only change the return type of the getEvents method such that it returns page<EventCreateResponseObject>
+
+
+###Prompt- 5:
+
+Create a new GET /audit/verify endpoint in the existing controller class:
+- Do not change the existing code
+- create a new class named ChainVerificationResult with the fields - firstInvalidRecordId, violationDescription
+- It should not accet any input params. It should call verifyChain() method in service class and return ChainVerificationResult Object.
+- add verifyChain() method in the already existing service class
+- what verifyChain() method should do:
+   1. Parse through all the events.
+   2. compare event.hash and event.previousHash (Except for the first event whose previousHash is always NULL)
+   3. if both are equal for all the events in the table, return an empty object.
+   4. if there is a mismatch stop the process and assign event.id to ChainVerificationResult.firstInvalidRecordId  and ChainVerificationResult.violationDescription as "HASH MISMATCH" and return ChainVerificationResult object to the controller
