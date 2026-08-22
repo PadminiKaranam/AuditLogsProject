@@ -7,7 +7,9 @@ import java.util.NoSuchElementException;
 import java.util.stream.Collectors;
 
 import org.springframework.data.domain.Page;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
@@ -115,6 +117,19 @@ public class AuditLogsController {
 		Event redacted = eventService.redactFieldsFromPayload(id, fields);
 		log.info("Response status={} eventId={}", HttpStatus.OK.value(), redacted.getId());
 		return ResponseEntity.ok(redacted);
+	}
+
+	@GetMapping("/export")
+	public ResponseEntity<byte[]> exportBundle(
+			@RequestParam(required = false) String resourceId,
+			@RequestParam(required = false) String actorId) {
+		log.info("Request received: GET /audit/export actorId={} resourceId={}", actorId, resourceId);
+		byte[] csv = eventService.exportBundle(resourceId, actorId);
+		log.info("Response status={} file=Event_Bundle.csv size={}", HttpStatus.OK.value(), csv.length);
+		return ResponseEntity.ok()
+				.header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"Event_Bundle.csv\"")
+				.contentType(MediaType.parseMediaType("text/csv"))
+				.body(csv);
 	}
 
 	@ExceptionHandler(MethodArgumentNotValidException.class)

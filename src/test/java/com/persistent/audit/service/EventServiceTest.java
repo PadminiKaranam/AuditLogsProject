@@ -260,6 +260,54 @@ class EventServiceTest {
 	}
 
 	@Test
+	void exportBundle_writesCsvWithChainMetadataForMatchingEvents() {
+		Event first = event(1L, "h1", null);
+		first.setActorId("actor-1");
+		first.setResourceId("res-1");
+		first.setPayload("{\"name\":\"Alice\"}");
+		Event second = event(2L, "h2", "h1");
+		second.setActorId("actor-1");
+		second.setResourceId("res-1");
+		second.setPayload("{\"name\":\"Bob, Jr\"}");
+		when(eventRepository.findForExport("actor-1", "res-1")).thenReturn(List.of(first, second));
+
+		byte[] csvBytes = eventService.exportBundle("res-1", "actor-1");
+		String csv = new String(csvBytes, java.nio.charset.StandardCharsets.UTF_8);
+
+		assertThat(csv).startsWith("id,eventType,actorId,resourceType,resourceId,payload,timestamp,chainMetadata\n");
+		assertThat(csv).contains("1,LOGIN,actor-1,SESSION,res-1");
+		assertThat(csv).contains("\"{\"").contains("Bob, Jr");
+		assertThat(csv).contains(PayloadMerkleHasher.sha256("h1"));
+		assertThat(csv).contains(PayloadMerkleHasher.sha256("h2h1"));
+		verify(eventRepository).findForExport("actor-1", "res-1");
+	}
+
+	@Test
+	void exportBundle_blankFiltersExportAllSequentialEvents() {
+		when(eventRepository.findForExport(null, null)).thenReturn(List.of());
+
+		byte[] csvBytes = eventService.exportBundle("  ", "");
+		String csv = new String(csvBytes, java.nio.charset.StandardCharsets.UTF_8);
+
+		assertThat(csv).isEqualTo("id,eventType,actorId,resourceType,resourceId,payload,timestamp,chainMetadata\n");
+		verify(eventRepository).findForExport(null, null);
+	}
+
+	@Test
+	void exportBundle_filtersByActorIdOnly() {
+		Event event = event(5L, "h5", "h4");
+		event.setActorId("actor-9");
+		when(eventRepository.findForExport("actor-9", null)).thenReturn(List.of(event));
+
+		byte[] csvBytes = eventService.exportBundle(null, "actor-9");
+		String csv = new String(csvBytes, java.nio.charset.StandardCharsets.UTF_8);
+
+		assertThat(csv).contains("5,LOGIN,actor-9");
+		assertThat(csv).contains(PayloadMerkleHasher.sha256("h5h4"));
+		verify(eventRepository).findForExport("actor-9", null);
+	}
+
+	@Test
 	void getEvents_withoutFiltersUsesFindAllAndPageSizeTen() {
 		List<Event> pageContent = events(1, 10);
 		when(eventRepository.findAll(any(Pageable.class)))

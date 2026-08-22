@@ -15,6 +15,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
 import com.persistent.audit.crypto.PayloadMerkleHasher;
+import com.persistent.audit.model.BundleExportStructureResponse;
 import com.persistent.audit.model.ChainVerificationResult;
 import com.persistent.audit.model.Event;
 import com.persistent.audit.model.EventCreateResponseObject;
@@ -149,6 +150,68 @@ public class EventService {
 		Event saved = eventRepository.save(event);
 		log.info("Redaction completed eventId={} hash unchanged", saved.getId());
 		return saved;
+	}
+
+	@Transactional(readOnly = true)
+	public byte[] exportBundle(String resourceId, String actorId) {
+		log.info("Exporting event bundle actorId={} resourceId={}", actorId, resourceId);
+		List<Event> events = eventRepository.findForExport(blankToNull(actorId), blankToNull(resourceId));
+		List<BundleExportStructureResponse> rows = new ArrayList<>();
+		for (Event event : events) {
+			String chainMetadata = PayloadMerkleHasher.sha256(
+					nullToEmpty(event.getHash()) + nullToEmpty(event.getPreviousHash()));
+			rows.add(new BundleExportStructureResponse(
+					event.getId(),
+					event.getEventType(),
+					event.getActorId(),
+					event.getResourceType(),
+					event.getResourceId(),
+					event.getPayload(),
+					event.getTimestamp(),
+					chainMetadata));
+		}
+		byte[] csv = toCsv(rows);
+		log.info("Exported event bundle rowCount={} file=Event_Bundle.csv", rows.size());
+		return csv;
+	}
+
+	private String nullToEmpty(String value) {
+		return value == null ? "" : value;
+	}
+
+	private byte[] toCsv(List<BundleExportStructureResponse> rows) {
+		StringBuilder csv = new StringBuilder();
+		csv.append("id,eventType,actorId,resourceType,resourceId,payload,timestamp,chainMetadata\n");
+		for (BundleExportStructureResponse row : rows) {
+			csv.append(csvValue(row.getId()))
+					.append(',')
+					.append(csvValue(row.getEventType()))
+					.append(',')
+					.append(csvValue(row.getActorId()))
+					.append(',')
+					.append(csvValue(row.getResourceType()))
+					.append(',')
+					.append(csvValue(row.getResourceId()))
+					.append(',')
+					.append(csvValue(row.getPayload()))
+					.append(',')
+					.append(csvValue(row.getTimestamp() == null ? null : row.getTimestamp().toString()))
+					.append(',')
+					.append(csvValue(row.getChainMetadata()))
+					.append('\n');
+		}
+		return csv.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8);
+	}
+
+	private String csvValue(Object value) {
+		if (value == null) {
+			return "";
+		}
+		String text = String.valueOf(value);
+		if (text.contains(",") || text.contains("\"") || text.contains("\n") || text.contains("\r")) {
+			return "\"" + text.replace("\"", "\"\"") + "\"";
+		}
+		return text;
 	}
 
 	private List<String> parseFieldKeys(String fields) {

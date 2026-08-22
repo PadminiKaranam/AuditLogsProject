@@ -36,4 +36,12 @@ public interface EventRepository extends JpaRepository<Event, Long> {
 			@Param("fromTimestamp") Instant fromTimestamp,
 			@Param("toTimestamp") Instant toTimestamp,
 			Pageable pageable);
+
+	@Query("""
+			SELECT e FROM Event e
+			WHERE (:actorId IS NULL OR e.actorId = :actorId)
+			  AND (:resourceId IS NULL OR e.resourceId = :resourceId)
+			ORDER BY e.id ASC
+			""")
+	List<Event> findForExport(@Param("actorId") String actorId, @Param("resourceId") String resourceId);
 }

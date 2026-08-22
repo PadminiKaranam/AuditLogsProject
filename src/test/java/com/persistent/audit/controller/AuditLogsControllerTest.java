@@ -11,6 +11,8 @@ import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -248,5 +250,29 @@ class AuditLogsControllerTest {
 
 		mockMvc.perform(put("/audit/redact").param("id", "1").param("fields", "missing"))
 				.andExpect(status().isBadRequest());
+	}
+
+	@Test
+	void exportBundle_returnsCsvAttachment() throws Exception {
+		byte[] csv = "id,eventType\n1,LOGIN\n".getBytes();
+		when(eventService.exportBundle("res-1", "actor-1")).thenReturn(csv);
+
+		mockMvc.perform(get("/audit/export").param("resourceId", "res-1").param("actorId", "actor-1"))
+				.andExpect(status().isOk())
+				.andExpect(header().string("Content-Disposition", "attachment; filename=\"Event_Bundle.csv\""))
+				.andExpect(content().contentType("text/csv"))
+				.andExpect(content().bytes(csv));
+
+		verify(eventService).exportBundle("res-1", "actor-1");
+	}
+
+	@Test
+	void exportBundle_optionalFiltersArePassedThrough() throws Exception {
+		when(eventService.exportBundle(null, null)).thenReturn("id\n".getBytes());
+
+		mockMvc.perform(get("/audit/export"))
+				.andExpect(status().isOk());
+
+		verify(eventService).exportBundle(null, null);
 	}
 }

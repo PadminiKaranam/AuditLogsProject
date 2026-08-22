@@ -140,3 +140,115 @@ ADD LOGGING and unit testcases (Without Changing Existing Logic)
    - Configure log levels (INFO for prod, DEBUG and error for dev)
    - Add file logging configuration (logs in ./logs/audit-events.log)
 5. And also add unit testcases without changing the existing code including all the edge case scenarios like pagination (what if more than 10 records), chainVerification (what if there is only one record) and many more like this using junit and Mockito and also execute all the testcases and they should pass 
+
+
+
+
+
+Scenario-B
+
+### Prompt-1:
+Act as a Senior Backend Engineer. 
+
+I need you to extend this existing audit-log-service tamper-evident system to support a data retention policy without breaking event chain verification.
+
+### Context
+In Scenario A, we built a sequentially linked events where each event contains PreviousHash, and Hash. 
+We are now introducing Scenario B: records older than a configurable window (e.g., 90 days) must delete the events, but the system must still verify the overall integrity of the chain.
+
+### Technical Requirements
+1. Controller changes: Create PUT - /audit/checkForRetention endpoint which accepts no.of days as an input. Validate this that it should be an integer otherwise throw BAD Request. Pass this field(days) to the service layer.
+2. Schema Extension: Update the Event model to include a `status` field (which will have either ACTIVE or ARCHIVED)
+3. Retention Worker: Write a method in already existing service layer that does the following:
+   - Retrieve the events from the Event table whose newly added 'status' files is 'ACTIVE'
+   - Check if the value of the timestamp field of the event is older than 90 days from todays date
+   - If yes, then update the value of status field to 'ARCHIVED'
+4. Do not change any logic for calculating hash code or verify endpoint. The chain linking should still be the same irrespective of the value of status field.
+5. Add the unit testcases for this endpoint by inserting mocked data into Event table:
+   - Include testcases for invalid days input, valid days input, and check for the value of status field
+   - Include the testcase to check for the chain of the events before and after retention.
+   - verify whether all the testcases are getting passed
+
+
+### Prompt-2:
+Act as a Principal Java Architect and Cryptographic Engineer. 
+
+I need you to design and implement a "Structured Redaction" scheme for a tamper-evident audit-log-service. The system must allow specific fields within a payload field of the Event table (such as account numbers or PII) to be permanently redacted for privacy compliance without breaking the sequential cryptographic hash chain.
+
+### Context & Problem Statement
+This is a genuine engineering problem: a standard event hash covers the original raw values as a string. Simply removing or masking a value would invalidate the hash and signal a false-positive data tampering event. We need a scheme where a field value from payload(json) can be completely deleted from the database, but its cryptographic proof remains behind, allowing the overall event hash (and the subsequent chain) to verify perfectly.
+
+### Architectural Approach
+Implement a "Salted Per-Field Hashing" (Merkle-lite) approach:
+1. Instead of hashing the entire JSON payload string together, each key-value pair in the payload is assigned a unique random salt (nonce) to prevent attacks on redacted data.
+2. Each field's leaf hash is computed as: SHA-256(key + value + salt).
+3. The individual field hashes are sorted lexicographically by key and hashed together to create a single `PayloadRootHash`.
+Example:
+Original Payload: {"name": "Alice", "account": "12345"}
+
+[Field: name]    -> SHA-256("name" + "Alice" + "SaltXYZ...")   -> Leaf Hash A \
+                                                                                -> Combine & Hash -> [Payload Root Hash]
+[Field: account] -> SHA-256("account" + "12345" + "SaltABC...") -> Leaf Hash B /
+
+4. The final `hash` (CurrentHash) is computed over the following fields of the event:
+    - eventType
+    - actorId
+    - resourceType
+    - resourceId
+    - PayloadRootHash
+    - timestamp
+    - previousHash
+
+5. When a field is redacted, its raw value and salt are permanently deleted from the database, but its pre-computed leaf hash is kept.
+
+### Technical Requirements
+1. In createEvent method inside service layer change the logic of calculating hash for both the fields 'previousHash' and 'hash'.
+2. Use the common approach for calculating hash for both the fields ('previousHash' and 'hash') based on the above "Salted Per-Field Hashing" (Merkle-lite) approach.
+   - while calculating previousHash retrieve the first eventRecord orderby id desc, then call computeHash() method.
+   - Change the computeHash() method - convert String to JSON Object using Jacckson. Generate salts for each key-value pair. Calculate hash for key, value and the salt generated. Do, the same for all the keyValue pairs. Combine all these hashes and generate a single final hash and return it.  
+3. Leave the type of payload in the model classes as a string only but convert that string to JSON Object using Jackson only while calculating hash for payload.
+4. After creating this hashing algorithm, add an endpoint /audit/redact in the already existing controller which accepts id, fields(comma separated key values from payload json) which calls a method redactFieldsFromPayload in service layer and returns EventObject. Also, validate the input fields
+5. Create redactFieldsFromPayload() method which
+   - accepts id and fields(comma separated values of string) from /redact endpoint
+   - retrieve the payload of event record based on the id given
+   - convert the string payload to JSON Object using jackson
+   - for all the keys present in fields:
+      1. check whether the key is present in payload jsonObjet
+      2. If present, change the value of the key to null
+   - Update the value of the payload in the database.
+   - It will return Event Object to the controller.
+6. Do not change any other existing logics. Do not add any new fields to the model classes.
+7. Add junit testcases for all the edge case scenario with the mocked data. Also change the existing testcases which calculates the hash with old logic and verify all the existing and new added testcases.
+
+### Constraints
+- Do not use external heavy blockchain frameworks. Use standard Java security libraries.
+- Write readable code with explicit exception handling.
+
+
+### Prompt-3:
+Act as a Software Engineer.
+
+I need you to implement a "Bulk Export" feature for our tamper-evident ledger system using Java 17+, Spring Boot, and an H2 database. The endpoint must export all ledger records associated with a specific resourceId or actorId into a self-contained, cryptographically verifiable bundle.
+
+### Context
+Export event records into a file and it must be a self-contained cryptographic snapshot. A third-party recipient must be able to independently verify that none of the records inside the bundle have been modified, reordered, or deleted since the export occurred.
+
+### Technical Requirements
+1. Export Endpoint: Create a /audit/export that accepts `resourceId` and `actorId` as query parameters. Botha re optional. It must fetch the sequential event records based on the input params. call exportBundle() method in service layer
+2. Create a model class BundleExportStructureResponse.java with the fields
+   - id
+   - eventType
+   - actorId
+   - resourceType
+   - resourceId
+   - payload
+   - timestamp
+   - chainMetadata
+3. create a new method in service layer exportBundle() which does:
+   - Accepts `resourceId` and `actorId` as params
+   - Retrieve the list of events based on the given resourceId` and `actorId fields.
+   - For each event record calculate chainMetadata = hash(event.hash, event.previousHash)
+   - Convert into List<BundleExportStructureResponse> and create an excel sheet with the filename: 'Event_Bundle.csv' which contains list of BundleExportStructureResponse
+   - Give the file as an output
+4. Write the testcases and verify them.
+5. Do not change any existing logic
