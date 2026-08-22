@@ -25,7 +25,9 @@ import com.persistent.audit.model.EventCreateResponseObject;
 import com.persistent.audit.service.EventService;
 
 import jakarta.validation.Valid;
+import lombok.extern.slf4j.Slf4j;
 
+@Slf4j
 @RestController
 @RequestMapping("/audit")
 public class AuditLogsController {
@@ -38,12 +40,17 @@ public class AuditLogsController {
 
 	@PostMapping("/createEvent")
 	public ResponseEntity<EventCreateResponseObject> createEvent(@Valid @RequestBody EventCreateRequest request) {
+		log.info("Request received: POST /audit/createEvent eventType={} actorId={} resourceType={} resourceId={}",
+				request.getEventType(), request.getActorId(), request.getResourceType(), request.getResourceId());
+		log.debug("Create event request parameters: eventType={}, actorId={}, resourceType={}, resourceId={}",
+				request.getEventType(), request.getActorId(), request.getResourceType(), request.getResourceId());
 		EventCreateResponseObject saved = eventService.createEvent(
 				request.getEventType(),
 				request.getActorId(),
 				request.getResourceType(),
 				request.getResourceId(),
 				request.getPayload());
+		log.info("Response status={} eventId={}", HttpStatus.CREATED.value(), saved.getId());
 		return ResponseEntity.status(HttpStatus.CREATED).body(saved);
 	}
 
@@ -56,14 +63,24 @@ public class AuditLogsController {
 			@RequestParam(required = false) Instant fromTimestamp,
 			@RequestParam(required = false) Instant toTimestamp
 			) {
+		log.info("Request received: GET /audit/events eventType={} actorId={} resourceType={} resourceId={} fromTimestamp={} toTimestamp={}",
+				eventType, actorId, resourceType, resourceId, fromTimestamp, toTimestamp);
+		log.debug("Get events request parameters: eventType={}, actorId={}, resourceType={}, resourceId={}, fromTimestamp={}, toTimestamp={}",
+				eventType, actorId, resourceType, resourceId, fromTimestamp, toTimestamp);
 		Page<EventCreateResponseObject> events = eventService.getEvents(
 				eventType, actorId, resourceType, resourceId, fromTimestamp, toTimestamp);
+		log.info("Response status={} totalElements={} pageSize={}",
+				HttpStatus.OK.value(), events.getTotalElements(), events.getSize());
 		return ResponseEntity.ok(events);
 	}
 
 	@GetMapping("/verify")
 	public ResponseEntity<ChainVerificationResult> verifyChain() {
-		return ResponseEntity.ok(eventService.verifyChain());
+		log.info("Request received: GET /audit/verify");
+		ChainVerificationResult result = eventService.verifyChain();
+		log.info("Response status={} firstInvalidRecordId={} violationDescription={}",
+				HttpStatus.OK.value(), result.getFirstInvalidRecordId(), result.getViolationDescription());
+		return ResponseEntity.ok(result);
 	}
 
 	@ExceptionHandler(MethodArgumentNotValidException.class)
@@ -74,11 +91,13 @@ public class AuditLogsController {
 						error -> error.getDefaultMessage() != null ? error.getDefaultMessage() : "invalid",
 						(first, ignored) -> first,
 						LinkedHashMap::new));
+		log.error("Validation exception on request fields={}", fieldErrors, ex);
 		return error(HttpStatus.BAD_REQUEST, "Validation failed", fieldErrors);
 	}
 
 	@ExceptionHandler({ HttpMessageNotReadableException.class, MethodArgumentTypeMismatchException.class })
 	public ResponseEntity<Map<String, Object>> handleBadRequest(Exception ex) {
+		log.error("Bad request exception: {}", ex.getMessage(), ex);
 		return error(HttpStatus.BAD_REQUEST, ex.getMessage(), null);
 	}
 

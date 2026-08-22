@@ -120,3 +120,23 @@ Create a new GET /audit/verify endpoint in the existing controller class:
    2. compare event.hash and event.previousHash (Except for the first event whose previousHash is always NULL)
    3. if both are equal for all the events in the table, return an empty object.
    4. if there is a mismatch stop the process and assign event.id to ChainVerificationResult.firstInvalidRecordId  and ChainVerificationResult.violationDescription as "HASH MISMATCH" and return ChainVerificationResult object to the controller
+
+
+
+###Prompt- 6:
+ADD LOGGING and unit testcases (Without Changing Existing Logic)
+1. Logging requirements:
+   - Use @Slf4j (Lombok)
+   - Log levels: INFO for business operations, DEBUG for details, ERROR for exceptions
+   - DO NOT change any existing business logic, only add log statements
+2. Add logs for:
+   - Controller: Request received, request parameters, response status, exceptions
+   - Service: hashing, chainVerification, any errors
+3. Log format should include:
+   - Timestamp
+   - Log level
+   - Relevant parameters (avoid logging sensitive data like payload)
+4. Update application.properties:
+   - Configure log levels (INFO for prod, DEBUG and error for dev)
+   - Add file logging configuration (logs in ./logs/audit-events.log)
+5. And also add unit testcases without changing the existing code including all the edge case scenarios like pagination (what if more than 10 records), chainVerification (what if there is only one record) and many more like this using junit and Mockito and also execute all the testcases and they should pass 
