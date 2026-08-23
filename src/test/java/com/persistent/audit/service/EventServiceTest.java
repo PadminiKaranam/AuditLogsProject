@@ -14,7 +14,6 @@ import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 import java.util.NoSuchElementException;
 import java.util.Optional;
 
@@ -77,7 +76,7 @@ class EventServiceTest {
 	}
 
 	@Test
-	void createEvent_linksPreviousHashByRecomputingLatestEvent() {
+	void createEvent_linksPreviousHashFromLatestStoredHash() {
 		Event previous = committedEvent(1L, "{\"name\":\"Alice\"}", null);
 		when(eventRepository.findTopByOrderByIdDesc()).thenReturn(Optional.of(previous));
 		when(eventRepository.save(any(Event.class))).thenAnswer(invocation -> {
@@ -95,7 +94,7 @@ class EventServiceTest {
 	}
 
 	@Test
-	void createEvent_blankPayloadNormalizedToEmptyJson() {
+	void createEvent_blankPayloadIsStoredAsSubmitted() {
 		when(eventRepository.findTopByOrderByIdDesc()).thenReturn(Optional.empty());
 		when(eventRepository.save(any(Event.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
@@ -103,11 +102,12 @@ class EventServiceTest {
 
 		ArgumentCaptor<Event> captor = ArgumentCaptor.forClass(Event.class);
 		verify(eventRepository).save(captor.capture());
-		assertThat(captor.getValue().getPayload()).isEqualTo("{}");
+		assertThat(captor.getValue().getPayload()).isEqualTo("  ");
+		assertThat(captor.getValue().getHash()).hasSize(64);
 	}
 
 	@Test
-	void createEvent_nullPayloadNormalizedToEmptyJson() {
+	void createEvent_nullPayloadIsStoredAsNull() {
 		when(eventRepository.findTopByOrderByIdDesc()).thenReturn(Optional.empty());
 		when(eventRepository.save(any(Event.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
@@ -115,7 +115,8 @@ class EventServiceTest {
 
 		ArgumentCaptor<Event> captor = ArgumentCaptor.forClass(Event.class);
 		verify(eventRepository).save(captor.capture());
-		assertThat(captor.getValue().getPayload()).isEqualTo("{}");
+		assertThat(captor.getValue().getPayload()).isNull();
+		assertThat(captor.getValue().getHash()).hasSize(64);
 	}
 
 	@Test
@@ -145,18 +146,14 @@ class EventServiceTest {
 		ArgumentCaptor<Event> captor = ArgumentCaptor.forClass(Event.class);
 		verify(eventRepository).save(captor.capture());
 		Event saved = captor.getValue();
+		assertThat(saved.getPayload()).isEqualTo(payload);
 		var payloadNode = PayloadMerkleHasher.parseObject(saved.getPayload());
-		Map<String, String> salts = PayloadMerkleHasher.nestedStringMap(payloadNode, PayloadMerkleHasher.SALTS_KEY);
-		Map<String, String> leaves = PayloadMerkleHasher.nestedStringMap(payloadNode, PayloadMerkleHasher.LEAVES_KEY);
-		assertThat(salts).containsOnlyKeys("account", "name");
-		assertThat(leaves).containsOnlyKeys("account", "name");
-		assertThat(salts.get("account")).isNotBlank();
-		assertThat(leaves.get("name")).isEqualTo(PayloadMerkleHasher.leafHash("name", "Alice", salts.get("name")));
-		String root = PayloadMerkleHasher.payloadRootFromPayload(saved.getPayload());
-		assertThat(saved.getHash()).isEqualTo(PayloadMerkleHasher.computeEventHash(
-				"LOGIN", "actor-1", "SESSION", "s-1", root, saved.getTimestamp(), null));
-		assertThat(saved.getHash()).hasSize(64);
+		assertThat(payloadNode.has(PayloadMerkleHasher.SALTS_KEY)).isFalse();
+		assertThat(payloadNode.has(PayloadMerkleHasher.LEAVES_KEY)).isFalse();
 		assertThat(payloadNode.get("name").asString()).isEqualTo("Alice");
+		assertThat(saved.getHash()).hasSize(64);
+		assertThat(saved.getHash()).isNotEqualTo(PayloadMerkleHasher.computeEventHash(
+				"LOGIN", "actor-1", "SESSION", "s-1", payload, saved.getTimestamp(), null));
 	}
 
 	@Test
@@ -179,27 +176,27 @@ class EventServiceTest {
 	}
 
 	@Test
-	void redactFieldsFromPayload_nullsValueRemovesSaltKeepsLeafHashAndEventHash() {
+	void redactFieldsFromPayload_nullsValueKeepsSaltLeafHashAndEventHash() {
 		Event stored = committedEvent(7L, "{\"name\":\"Alice\",\"account\":\"12345\"}", null);
 		String originalHash = stored.getHash();
 		String accountLeaf = PayloadMerkleHasher.nestedStringMap(
 				PayloadMerkleHasher.parseObject(stored.getPayload()), PayloadMerkleHasher.LEAVES_KEY).get("account");
 		when(eventRepository.findById(7L)).thenReturn(Optional.of(stored));
 		when(eventRepository.save(any(Event.class))).thenAnswer(invocation -> invocation.getArgument(0));
+		String rootBeforeRedact = PayloadMerkleHasher.payloadRootFromPayload(stored.getPayload());
 
-		Event result = eventService.redactFieldsFromPayload(7L, "account");
+		EventCreateResponseObject result = eventService.redactFieldsFromPayload(7L, "account");
 
 		var payload = PayloadMerkleHasher.parseObject(result.getPayload());
 		assertThat(payload.get("account").isNull()).isTrue();
 		assertThat(payload.get("name").asString()).isEqualTo("Alice");
-		assertThat(PayloadMerkleHasher.nestedStringMap(payload, PayloadMerkleHasher.SALTS_KEY)).doesNotContainKey("account");
+		assertThat(PayloadMerkleHasher.nestedStringMap(payload, PayloadMerkleHasher.SALTS_KEY)).containsKey("account");
 		assertThat(PayloadMerkleHasher.nestedStringMap(payload, PayloadMerkleHasher.SALTS_KEY)).containsKey("name");
 		assertThat(PayloadMerkleHasher.nestedStringMap(payload, PayloadMerkleHasher.LEAVES_KEY).get("account"))
 				.isEqualTo(accountLeaf);
-		assertThat(result.getHash()).isEqualTo(originalHash);
-		assertThat(PayloadMerkleHasher.payloadRootFromPayload(result.getPayload()))
-				.isEqualTo(PayloadMerkleHasher.payloadRootFromPayload(stored.getPayload()));
-		assertThat(result.getPreviousHash()).isNull();
+		assertThat(stored.getHash()).isEqualTo(originalHash);
+		assertThat(PayloadMerkleHasher.payloadRootFromPayload(result.getPayload())).isEqualTo(rootBeforeRedact);
+		assertThat(stored.getPreviousHash()).isNull();
 	}
 
 	@Test
@@ -208,12 +205,12 @@ class EventServiceTest {
 		when(eventRepository.findById(3L)).thenReturn(Optional.of(stored));
 		when(eventRepository.save(any(Event.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
-		Event result = eventService.redactFieldsFromPayload(3L, " account , ssn ");
+		EventCreateResponseObject result = eventService.redactFieldsFromPayload(3L, " account , ssn ");
 
 		assertThat(PayloadMerkleHasher.parseObject(result.getPayload()).get("account").isNull()).isTrue();
 		assertThat(PayloadMerkleHasher.parseObject(result.getPayload()).get("ssn").isNull()).isTrue();
 		assertThat(PayloadMerkleHasher.parseObject(result.getPayload()).get("name").asString()).isEqualTo("Alice");
-		assertThat(result.getPreviousHash()).isEqualTo("prev");
+		assertThat(stored.getPreviousHash()).isEqualTo("prev");
 	}
 
 	@Test

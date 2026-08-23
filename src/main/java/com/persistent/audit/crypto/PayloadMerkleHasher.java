@@ -16,11 +16,14 @@ import tools.jackson.core.JacksonException;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 import tools.jackson.databind.node.ObjectNode;
+import lombok.extern.slf4j.Slf4j;
+
 
 /**
  * Salted per-field (Merkle-lite) hashing. Salts and leaf hashes are stored
  * inside the payload JSON string so Event needs no extra columns.
  */
+@Slf4j
 public final class PayloadMerkleHasher {
 
 	public static final String SALTS_KEY = "__salts";
@@ -54,17 +57,12 @@ public final class PayloadMerkleHasher {
 
 	public static String redact(String payloadJson, List<String> keys) {
 		ObjectNode object = parseObject(payloadJson);
-		ObjectNode salts = metadataObject(object, SALTS_KEY);
-		ObjectNode leaves = metadataObject(object, LEAVES_KEY);
 		for (String key : keys) {
 			if (isReserved(key) || !object.has(key)) {
 				throw new IllegalArgumentException("payload does not contain field: " + key);
 			}
 			object.putNull(key);
-			salts.remove(key);
 		}
-		object.set(SALTS_KEY, salts);
-		object.set(LEAVES_KEY, leaves);
 		return writeJson(object);
 	}
 
@@ -126,8 +124,11 @@ public final class PayloadMerkleHasher {
 		if (payloadJson == null || payloadJson.isBlank()) {
 			return MAPPER.createObjectNode();
 		}
+		log.info("Parsing payload JSON: {}", payloadJson);
 		try {
-			JsonNode node = MAPPER.readTree(payloadJson);
+			String normalizedJson = payloadJson.replace('\'', '"');
+			JsonNode node = MAPPER.readTree(normalizedJson);
+			log.info("Parsed payload JSON: {}", node);
 			if (node == null || !node.isObject()) {
 				throw new IllegalArgumentException("payload must be a JSON object");
 			}

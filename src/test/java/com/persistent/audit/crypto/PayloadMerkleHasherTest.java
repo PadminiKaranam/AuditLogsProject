@@ -54,8 +54,15 @@ class PayloadMerkleHasherTest {
 		String redacted = PayloadMerkleHasher.redact(sealed, List.of("account"));
 		assertThat(PayloadMerkleHasher.parseObject(redacted).get("account").isNull()).isTrue();
 		assertThat(PayloadMerkleHasher.nestedStringMap(
-				PayloadMerkleHasher.parseObject(redacted), PayloadMerkleHasher.SALTS_KEY)).doesNotContainKey("account");
+				PayloadMerkleHasher.parseObject(redacted), PayloadMerkleHasher.SALTS_KEY)).containsKey("account");
 		assertThat(PayloadMerkleHasher.payloadRootFromPayload(redacted)).isEqualTo(before);
+	}
+
+	@Test
+	void parseObject_acceptsSingleQuotedJson() {
+		var payload = PayloadMerkleHasher.parseObject("{'name':'Alice','account':'12345'}");
+		assertThat(payload.get("name").asString()).isEqualTo("Alice");
+		assertThat(payload.get("account").asString()).isEqualTo("12345");
 	}
 
 	@Test

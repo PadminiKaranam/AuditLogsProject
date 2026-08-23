@@ -40,7 +40,6 @@ import org.springframework.validation.beanvalidation.LocalValidatorFactoryBean;
 import com.persistent.audit.exceptions.AuditExceptionHandler;
 import com.persistent.audit.exceptions.UserNotFoundException;
 import com.persistent.audit.model.ChainVerificationResult;
-import com.persistent.audit.model.Event;
 import com.persistent.audit.model.EventCreateResponseObject;
 import com.persistent.audit.model.RetentionCheckResult;
 import com.persistent.audit.service.EventService;
@@ -220,15 +219,10 @@ class AuditLogsControllerTest {
 
 	@Test
 	void redact_returnsOkEvent() throws Exception {
-		Event event = new Event();
-		event.setId(8L);
-		event.setEventType("LOGIN");
-		event.setActorId("actor-1");
-		event.setResourceType("SESSION");
-		event.setResourceId("s-8");
-		event.setPayload("{\"account\":null,\"name\":\"Alice\"}");
-		event.setHash("abc");
-		when(eventService.redactFieldsFromPayload(8L, "account")).thenReturn(event);
+		EventCreateResponseObject redacted = new EventCreateResponseObject(
+				8L, "LOGIN", "actor-1", "SESSION", "s-8",
+				"{\"account\":null,\"name\":\"Alice\"}", Instant.parse("2026-08-22T10:15:30Z"));
+		when(eventService.redactFieldsFromPayload(8L, "account")).thenReturn(redacted);
 
 		mockMvc.perform(withAdmin(put("/audit/redact")).param("id", "8").param("fields", "account"))
 				.andExpect(status().isOk())

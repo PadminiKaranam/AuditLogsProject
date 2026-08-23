@@ -136,7 +136,7 @@ public class AuditLogsController {
 			log.error("Invalid redact fields input");
 			return ApiErrorResponse.of(HttpStatus.BAD_REQUEST, "fields is required", null);
 		}
-		Event redacted = eventService.redactFieldsFromPayload(id, fields);
+		EventCreateResponseObject redacted = eventService.redactFieldsFromPayload(id, fields);
 		log.info("Response status={} eventId={}", HttpStatus.OK.value(), redacted.getId());
 		return ResponseEntity.ok(redacted);
 	}

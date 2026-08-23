@@ -44,7 +44,7 @@ public class EventService {
 		Instant timestamp = Instant.now();
 		String normalizedPayload = StringUtils.hasText(payload) ? payload : "{}";
 		String previousHash = eventRepository.findTopByOrderByIdDesc()
-				.map(this::computeHash)
+				.map(Event::getHash)
 				.orElse(null);
 		log.debug("Hashing event with previousHash={}", previousHash);
 		String sealedPayload = PayloadMerkleHasher.seal(normalizedPayload);
@@ -56,7 +56,7 @@ public class EventService {
 		event.setActorId(actorId);
 		event.setResourceType(resourceType);
 		event.setResourceId(resourceId);
-		event.setPayload(sealedPayload);
+		event.setPayload(payload);
 		event.setTimestamp(timestamp);
 		event.setHash(hash);
 		event.setPreviousHash(previousHash);
@@ -132,7 +132,7 @@ public class EventService {
 	}
 
 	@Transactional
-	public Event redactFieldsFromPayload(Long id, String fields) {
+	public EventCreateResponseObject redactFieldsFromPayload(Long id, String fields) {
 		if (id == null) {
 			throw new IllegalArgumentException("id is required");
 		}
@@ -147,7 +147,7 @@ public class EventService {
 		Event event = eventRepository.findById(id)
 				.orElseThrow(() -> new NoSuchElementException("Event not found for id=" + id));
 		event.setPayload(PayloadMerkleHasher.redact(event.getPayload(), keys));
-		Event saved = eventRepository.save(event);
+		EventCreateResponseObject saved = EventCreateResponseObject.from(eventRepository.save(event));
 		log.info("Redaction completed eventId={} hash unchanged", saved.getId());
 		return saved;
 	}
