@@ -1,3 +1,5 @@
+Tool Used: Cursor IDE
+
 Scenario-A
 
 ### Prompt- 1:
@@ -254,3 +256,37 @@ Export event records into a file and it must be a self-contained cryptographic s
    - Give the file as an output
 4. Write the testcases and verify them.
 5. Do not change any existing logic
+
+
+
+
+
+
+
+
+
+
+Scenario-C:
+
+### Prompt-1:
+Act as a Software Engineer and 
+
+Enhance the existing audit-log-service with user management and role-based access control.
+
+Requirements:
+1. Create a new USERS table with fields:
+   - userId (primary key, auto-generated)
+   - username (string)
+   - userType (string: e.g., ADMIN, REGULATOR, USER)
+   - userEmail (string, unique)
+2. Create User Entity Class (Use Lombok annotations to avoid boiler-plate code), User Repository Interface extends JPA
+3. Create a User service class which contains a method named retrieveUserType() which accepts userEmail and userName as parameters.
+4. Update the existing controller class to accept header information("username" and "useremail") in all the endpoints. Validate the headers and return specific responseStatsu Codes.
+  - Call the user service layer and check for the userType
+  - Constraints: /createEvent, /verify, /checkForRetention, /redact endpoints requires ADMIN as userTpe. /getEvents, /export endpoint requires ADMIN or REGULATOR as userType. If not, return 403 Access Forbidden.
+5. Do no change the existing logic for all the endpoints and event service layer, repository and entity layers. Just add the header info in the controller for all of these endpoints.
+6. Separate Exception handlers written in controller to a separate package audit.exceptions
+7. Write the new testcases and also modify the existing testcases for this role based access control given to the endpoints and verify all the existing and new testcases.
+
+
+
