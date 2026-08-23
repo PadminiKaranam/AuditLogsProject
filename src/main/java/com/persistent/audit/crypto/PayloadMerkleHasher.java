@@ -17,7 +17,9 @@ import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 import tools.jackson.databind.node.ObjectNode;
 import lombok.extern.slf4j.Slf4j;
-
+import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeFormatterBuilder;
+import java.time.temporal.ChronoField;
 
 /**
  * Salted per-field (Merkle-lite) hashing. Salts and leaf hashes are stored
@@ -28,6 +30,14 @@ public final class PayloadMerkleHasher {
 
 	public static final String SALTS_KEY = "__salts";
 	public static final String LEAVES_KEY = "__leaves";
+
+	private static final DateTimeFormatter CANONICAL_TIMESTAMP_FORMATTER = 
+        new DateTimeFormatterBuilder()
+            .appendPattern("yyyy-MM-dd'T'HH:mm:ss.")
+            .appendFraction(ChronoField.NANO_OF_SECOND, 6, 6, false)
+            .appendPattern("'Z'")
+            .toFormatter()
+            .withZone(java.time.ZoneOffset.UTC);
 
 	private static final JsonMapper MAPPER = JsonMapper.builder().build();
 	private static final SecureRandom RANDOM = new SecureRandom();
@@ -115,20 +125,28 @@ public final class PayloadMerkleHasher {
 				+ nullToEmpty(resourceType) + "|"
 				+ nullToEmpty(resourceId) + "|"
 				+ nullToEmpty(payloadRootHash) + "|"
-				+ (timestamp != null ? timestamp.toString() : "") + "|"
+				+ formatTimestamp(timestamp) + "|"
 				+ nullToEmpty(previousHash);
 		return sha256(canonical);
 	}
+	
+	public static String formatTimestamp(Instant timestamp) {
+        if (timestamp == null) {
+            return "";
+        }
+        // Truncate to milliseconds to handle database precision differences
+        Instant truncated = timestamp.truncatedTo(java.time.temporal.ChronoUnit.MILLIS);
+        return truncated.atOffset(java.time.ZoneOffset.UTC)
+                .format(CANONICAL_TIMESTAMP_FORMATTER);
+    }
 
 	public static ObjectNode parseObject(String payloadJson) {
 		if (payloadJson == null || payloadJson.isBlank()) {
 			return MAPPER.createObjectNode();
 		}
-		log.info("Parsing payload JSON: {}", payloadJson);
 		try {
 			String normalizedJson = payloadJson.replace('\'', '"');
 			JsonNode node = MAPPER.readTree(normalizedJson);
-			log.info("Parsed payload JSON: {}", node);
 			if (node == null || !node.isObject()) {
 				throw new IllegalArgumentException("payload must be a JSON object");
 			}

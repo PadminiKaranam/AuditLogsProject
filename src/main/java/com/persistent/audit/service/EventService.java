@@ -6,7 +6,6 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.NoSuchElementException;
 import java.util.Objects;
-
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
@@ -51,12 +50,19 @@ public class EventService {
 		String hash = computeHash(eventType, actorId, resourceType, resourceId, sealedPayload, timestamp, previousHash);
 		log.debug("Computed hash={}", hash);
 
+		log.info("CREATE EVENT DEBUG:");
+        log.info("  normalizedPayload: {}", normalizedPayload);
+        log.info("  sealedPayload: {}", sealedPayload);
+        log.info("  timestamp: {}", timestamp);
+        log.info("  computed hash: {}", hash);
+
 		Event event = new Event();
 		event.setEventType(eventType);
 		event.setActorId(actorId);
 		event.setResourceType(resourceType);
 		event.setResourceId(resourceId);
-		event.setPayload(payload);
+		event.setPayload(normalizedPayload);
+		event.setSealedPayload(sealedPayload);
 		event.setTimestamp(timestamp);
 		event.setHash(hash);
 		event.setPreviousHash(previousHash);
@@ -97,21 +103,40 @@ public class EventService {
 	}
 
 	@Transactional(readOnly = true)
-	public ChainVerificationResult verifyChain() {
-		List<Event> events = eventRepository.findAll(Sort.by(Sort.Direction.ASC, "id"));
-		log.info("Starting chain verification eventCount={}", events.size());
-		for (int i = 1; i < events.size(); i++) {
-			Event current = events.get(i);
-			Event previous = events.get(i - 1);
-			log.debug("Verifying chain eventId={} previousEventId={}", current.getId(), previous.getId());
-			if (!Objects.equals(current.getPreviousHash(), previous.getHash())) {
-				log.info("Chain verification HASH MISMATCH firstInvalidRecordId={}", current.getId());
-				return new ChainVerificationResult(current.getId(), "HASH MISMATCH");
-			}
-		}
-		log.info("Chain verification completed with no mismatches");
-		return new ChainVerificationResult();
-	}
+    public ChainVerificationResult verifyChain() {
+        List<Event> events = eventRepository.findAll(Sort.by(Sort.Direction.ASC, "id"));
+        String expectedPreviousHash = null;
+
+        for (Event event : events) {
+            String recalculatedHash = computeHash(event);
+            
+			log.info("VERIFY EVENT id={} DEBUG:", event.getId());
+            log.info("  stored hash:       {}", event.getHash());
+            log.info("  recalculated hash: {}", recalculatedHash);
+            log.info("  hashes match: {}", Objects.equals(event.getHash(), recalculatedHash));
+            log.info("  sealedPayload: {}", event.getSealedPayload());
+            log.info("  timestamp: {}", event.getTimestamp());
+			
+            // Check if event's own hash matches (detects data tampering)
+            if (!Objects.equals(event.getHash(), recalculatedHash)) {
+                return invalid(event.getId(), "EVENT HASH MISMATCH");
+            }
+
+            // Check if previousHash link is valid (detects chain breaks)
+            if (!Objects.equals(event.getPreviousHash(), expectedPreviousHash)) {
+                return invalid(event.getId(), "PREVIOUS HASH MISMATCH");
+            }
+
+            expectedPreviousHash = event.getHash();
+        }
+
+        return new ChainVerificationResult();
+    }
+
+    private ChainVerificationResult invalid(Long eventId, String reason) {
+        log.warn("Chain verification failed eventId={} reason={}", eventId, reason);
+        return new ChainVerificationResult(eventId, reason);
+    }
 
 	@Transactional
 	public RetentionCheckResult checkForRetention(int days) {
@@ -146,7 +171,14 @@ public class EventService {
 		log.info("Redacting payload fields eventId={} fieldCount={}", id, keys.size());
 		Event event = eventRepository.findById(id)
 				.orElseThrow(() -> new NoSuchElementException("Event not found for id=" + id));
-		event.setPayload(PayloadMerkleHasher.redact(event.getPayload(), keys));
+		 // Redact the SEALED payload (contains __leaves metadata)
+		 String redactedSealedPayload = PayloadMerkleHasher.redact(event.getSealedPayload(), keys);
+		 event.setSealedPayload(redactedSealedPayload);
+		 
+		 // Also update the visible payload (without __salts/__leaves)
+		 String redactedPayload = PayloadMerkleHasher.redact(event.getPayload(), keys);
+		 event.setPayload(redactedPayload);
+ 
 		EventCreateResponseObject saved = EventCreateResponseObject.from(eventRepository.save(event));
 		log.info("Redaction completed eventId={} hash unchanged", saved.getId());
 		return saved;
@@ -240,19 +272,36 @@ public class EventService {
 	}
 
 	private String computeHash(Event event) {
-		return computeHash(event.getEventType(), event.getActorId(), event.getResourceType(), event.getResourceId(),
-				event.getPayload(), event.getTimestamp(), event.getPreviousHash());
-	}
+        String payloadRootHash = PayloadMerkleHasher.payloadRootFromPayload(event.getSealedPayload());
+        return PayloadMerkleHasher.computeEventHash(
+            event.getEventType(),
+            event.getActorId(),
+            event.getResourceType(),
+            event.getResourceId(),
+            payloadRootHash,
+            event.getTimestamp(),
+            event.getPreviousHash()
+        );
+    }
+
 
 	private String computeHash(String eventType, String actorId, String resourceType, String resourceId,
-			String payload, Instant timestamp, String previousHash) {
-		try {
-			String payloadRootHash = PayloadMerkleHasher.payloadRootFromPayload(payload);
-			return PayloadMerkleHasher.computeEventHash(eventType, actorId, resourceType, resourceId, payloadRootHash,
-					timestamp, previousHash);
-		} catch (RuntimeException e) {
-			log.error("Error while hashing event eventType={} actorId={}", eventType, actorId, e);
-			throw e;
-		}
-	}
+		String sealedPayload, Instant timestamp, String previousHash) {
+	String payloadRootHash = PayloadMerkleHasher.payloadRootFromPayload(sealedPayload);
+	return PayloadMerkleHasher.computeEventHash(eventType, actorId, resourceType, resourceId,
+			payloadRootHash, timestamp, previousHash);
+}
+
+
+	// private String computeHash(String eventType, String actorId, String resourceType, String resourceId,
+	// 		String payload, Instant timestamp, String previousHash) {
+	// 	try {
+	// 		String payloadRootHash = PayloadMerkleHasher.payloadRootFromPayload(payload);
+	// 		return PayloadMerkleHasher.computeEventHash(eventType, actorId, resourceType, resourceId, payloadRootHash,
+	// 				timestamp, previousHash);
+	// 	} catch (RuntimeException e) {
+	// 		log.error("Error while hashing event eventType={} actorId={}", eventType, actorId, e);
+	// 		throw e;
+	// 	}
+	// }
 }

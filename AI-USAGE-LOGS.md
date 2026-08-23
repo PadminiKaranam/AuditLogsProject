@@ -263,12 +263,6 @@ Export event records into a file and it must be a self-contained cryptographic s
 
 
 
-<<<<<<< HEAD
-=======
-
-
-
->>>>>>> 40d67c14767138a8f205360e5fcba609d919ad92
 Scenario-C:
 
 ### Prompt-1:
@@ -290,9 +284,3 @@ Requirements:
 5. Do no change the existing logic for all the endpoints and event service layer, repository and entity layers. Just add the header info in the controller for all of these endpoints.
 6. Separate Exception handlers written in controller to a separate package audit.exceptions
 7. Write the new testcases and also modify the existing testcases for this role based access control given to the endpoints and verify all the existing and new testcases.
-<<<<<<< HEAD
-=======
-
-
-
->>>>>>> 40d67c14767138a8f205360e5fcba609d919ad92

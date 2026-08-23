@@ -54,6 +54,10 @@ public class Event {
 	@Column(name = "payload", nullable = false, columnDefinition = "TEXT")
 	private String payload;
 
+	@NotBlank
+	@Column(name = "sealedPayload", nullable = false, columnDefinition = "TEXT")
+	private String sealedPayload;
+
 	@NotNull
 	@Column(name = "timestamp", nullable = false, updatable = false)
 	private Instant timestamp;

@@ -14,6 +14,7 @@ import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.NoSuchElementException;
 import java.util.Optional;
 
@@ -70,6 +71,8 @@ class EventServiceTest {
 		Event saved = captor.getValue();
 		assertThat(saved.getPreviousHash()).isNull();
 		assertThat(saved.getHash()).isNotBlank();
+		assertThat(saved.getPayload()).isEqualTo("{}");
+		assertThat(saved.getSealedPayload()).isEqualTo("{}");
 		assertThat(saved.getStatus()).isEqualTo(EventStatus.ACTIVE);
 		assertThat(result.getId()).isEqualTo(1L);
 		assertThat(result.getEventType()).isEqualTo("LOGIN");
@@ -94,7 +97,7 @@ class EventServiceTest {
 	}
 
 	@Test
-	void createEvent_blankPayloadIsStoredAsSubmitted() {
+	void createEvent_blankPayloadNormalizedToEmptyJson() {
 		when(eventRepository.findTopByOrderByIdDesc()).thenReturn(Optional.empty());
 		when(eventRepository.save(any(Event.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
@@ -102,12 +105,13 @@ class EventServiceTest {
 
 		ArgumentCaptor<Event> captor = ArgumentCaptor.forClass(Event.class);
 		verify(eventRepository).save(captor.capture());
-		assertThat(captor.getValue().getPayload()).isEqualTo("  ");
+		assertThat(captor.getValue().getPayload()).isEqualTo("{}");
+		assertThat(captor.getValue().getSealedPayload()).isEqualTo("{}");
 		assertThat(captor.getValue().getHash()).hasSize(64);
 	}
 
 	@Test
-	void createEvent_nullPayloadIsStoredAsNull() {
+	void createEvent_nullPayloadNormalizedToEmptyJson() {
 		when(eventRepository.findTopByOrderByIdDesc()).thenReturn(Optional.empty());
 		when(eventRepository.save(any(Event.class))).thenAnswer(invocation -> invocation.getArgument(0));
 
@@ -115,7 +119,8 @@ class EventServiceTest {
 
 		ArgumentCaptor<Event> captor = ArgumentCaptor.forClass(Event.class);
 		verify(eventRepository).save(captor.capture());
-		assertThat(captor.getValue().getPayload()).isNull();
+		assertThat(captor.getValue().getPayload()).isEqualTo("{}");
+		assertThat(captor.getValue().getSealedPayload()).isEqualTo("{}");
 		assertThat(captor.getValue().getHash()).hasSize(64);
 	}
 
@@ -147,13 +152,19 @@ class EventServiceTest {
 		verify(eventRepository).save(captor.capture());
 		Event saved = captor.getValue();
 		assertThat(saved.getPayload()).isEqualTo(payload);
-		var payloadNode = PayloadMerkleHasher.parseObject(saved.getPayload());
-		assertThat(payloadNode.has(PayloadMerkleHasher.SALTS_KEY)).isFalse();
-		assertThat(payloadNode.has(PayloadMerkleHasher.LEAVES_KEY)).isFalse();
-		assertThat(payloadNode.get("name").asString()).isEqualTo("Alice");
+		assertThat(PayloadMerkleHasher.parseObject(saved.getPayload()).has(PayloadMerkleHasher.SALTS_KEY)).isFalse();
+		assertThat(PayloadMerkleHasher.parseObject(saved.getPayload()).has(PayloadMerkleHasher.LEAVES_KEY)).isFalse();
+		var sealedNode = PayloadMerkleHasher.parseObject(saved.getSealedPayload());
+		Map<String, String> salts = PayloadMerkleHasher.nestedStringMap(sealedNode, PayloadMerkleHasher.SALTS_KEY);
+		Map<String, String> leaves = PayloadMerkleHasher.nestedStringMap(sealedNode, PayloadMerkleHasher.LEAVES_KEY);
+		assertThat(salts).containsOnlyKeys("account", "name");
+		assertThat(leaves).containsOnlyKeys("account", "name");
+		assertThat(leaves.get("name")).isEqualTo(PayloadMerkleHasher.leafHash("name", "Alice", salts.get("name")));
+		String root = PayloadMerkleHasher.payloadRootFromPayload(saved.getSealedPayload());
+		assertThat(saved.getHash()).isEqualTo(PayloadMerkleHasher.computeEventHash(
+				"LOGIN", "actor-1", "SESSION", "s-1", root, saved.getTimestamp(), null));
 		assertThat(saved.getHash()).hasSize(64);
-		assertThat(saved.getHash()).isNotEqualTo(PayloadMerkleHasher.computeEventHash(
-				"LOGIN", "actor-1", "SESSION", "s-1", payload, saved.getTimestamp(), null));
+		assertThat(sealedNode.get("name").asString()).isEqualTo("Alice");
 	}
 
 	@Test
@@ -176,26 +187,31 @@ class EventServiceTest {
 	}
 
 	@Test
-	void redactFieldsFromPayload_nullsValueKeepsSaltLeafHashAndEventHash() {
+	void redactFieldsFromPayload_nullsVisibleAndSealedPayloadKeepsLeafAndEventHash() {
 		Event stored = committedEvent(7L, "{\"name\":\"Alice\",\"account\":\"12345\"}", null);
 		String originalHash = stored.getHash();
 		String accountLeaf = PayloadMerkleHasher.nestedStringMap(
-				PayloadMerkleHasher.parseObject(stored.getPayload()), PayloadMerkleHasher.LEAVES_KEY).get("account");
+				PayloadMerkleHasher.parseObject(stored.getSealedPayload()), PayloadMerkleHasher.LEAVES_KEY)
+				.get("account");
 		when(eventRepository.findById(7L)).thenReturn(Optional.of(stored));
 		when(eventRepository.save(any(Event.class))).thenAnswer(invocation -> invocation.getArgument(0));
-		String rootBeforeRedact = PayloadMerkleHasher.payloadRootFromPayload(stored.getPayload());
+		String rootBeforeRedact = PayloadMerkleHasher.payloadRootFromPayload(stored.getSealedPayload());
 
 		EventCreateResponseObject result = eventService.redactFieldsFromPayload(7L, "account");
 
-		var payload = PayloadMerkleHasher.parseObject(result.getPayload());
-		assertThat(payload.get("account").isNull()).isTrue();
-		assertThat(payload.get("name").asString()).isEqualTo("Alice");
-		assertThat(PayloadMerkleHasher.nestedStringMap(payload, PayloadMerkleHasher.SALTS_KEY)).containsKey("account");
-		assertThat(PayloadMerkleHasher.nestedStringMap(payload, PayloadMerkleHasher.SALTS_KEY)).containsKey("name");
-		assertThat(PayloadMerkleHasher.nestedStringMap(payload, PayloadMerkleHasher.LEAVES_KEY).get("account"))
+		var visible = PayloadMerkleHasher.parseObject(result.getPayload());
+		assertThat(visible.get("account").isNull()).isTrue();
+		assertThat(visible.get("name").asString()).isEqualTo("Alice");
+		assertThat(visible.has(PayloadMerkleHasher.SALTS_KEY)).isFalse();
+		assertThat(visible.has(PayloadMerkleHasher.LEAVES_KEY)).isFalse();
+
+		var sealed = PayloadMerkleHasher.parseObject(stored.getSealedPayload());
+		assertThat(sealed.get("account").isNull()).isTrue();
+		assertThat(PayloadMerkleHasher.nestedStringMap(sealed, PayloadMerkleHasher.SALTS_KEY)).containsKey("account");
+		assertThat(PayloadMerkleHasher.nestedStringMap(sealed, PayloadMerkleHasher.LEAVES_KEY).get("account"))
 				.isEqualTo(accountLeaf);
 		assertThat(stored.getHash()).isEqualTo(originalHash);
-		assertThat(PayloadMerkleHasher.payloadRootFromPayload(result.getPayload())).isEqualTo(rootBeforeRedact);
+		assertThat(PayloadMerkleHasher.payloadRootFromPayload(stored.getSealedPayload())).isEqualTo(rootBeforeRedact);
 		assertThat(stored.getPreviousHash()).isNull();
 	}
 
@@ -413,7 +429,8 @@ class EventServiceTest {
 
 	@Test
 	void verifyChain_singleRecordReturnsEmptyResult() {
-		when(eventRepository.findAll(any(Sort.class))).thenReturn(List.of(event(1L, "h1", null)));
+		when(eventRepository.findAll(any(Sort.class))).thenReturn(List.of(
+				committedEvent(1L, "{\"name\":\"Alice\"}", null)));
 
 		ChainVerificationResult result = eventService.verifyChain();
 
@@ -423,9 +440,9 @@ class EventServiceTest {
 
 	@Test
 	void verifyChain_validChainReturnsEmptyResult() {
-		Event first = event(1L, "h1", null);
-		Event second = event(2L, "h2", "h1");
-		Event third = event(3L, "h3", "h2");
+		Event first = committedEvent(1L, "{\"name\":\"Alice\"}", null);
+		Event second = committedEvent(2L, "{\"name\":\"Bob\"}", first.getHash());
+		Event third = committedEvent(3L, "{\"name\":\"Carol\"}", second.getHash());
 		when(eventRepository.findAll(any(Sort.class))).thenReturn(List.of(first, second, third));
 
 		ChainVerificationResult result = eventService.verifyChain();
@@ -435,29 +452,43 @@ class EventServiceTest {
 	}
 
 	@Test
-	void verifyChain_mismatchStopsAtFirstInvalidRecord() {
-		Event first = event(1L, "h1", null);
-		Event second = event(2L, "h2", "wrong-hash");
-		Event third = event(3L, "h3", "h2");
+	void verifyChain_eventHashMismatchStopsAtFirstInvalidRecord() {
+		Event first = committedEvent(1L, "{\"name\":\"Alice\"}", null);
+		Event second = committedEvent(2L, "{\"name\":\"Bob\"}", first.getHash());
+		second.setHash("tampered-hash");
+		Event third = committedEvent(3L, "{\"name\":\"Carol\"}", "tampered-hash");
 		when(eventRepository.findAll(any(Sort.class))).thenReturn(List.of(first, second, third));
 
 		ChainVerificationResult result = eventService.verifyChain();
 
 		assertThat(result.getFirstInvalidRecordId()).isEqualTo(2L);
-		assertThat(result.getViolationDescription()).isEqualTo("HASH MISMATCH");
+		assertThat(result.getViolationDescription()).isEqualTo("EVENT HASH MISMATCH");
 	}
 
 	@Test
-	void verifyChain_laterMismatchReportsThatRecordId() {
-		Event first = event(1L, "h1", null);
-		Event second = event(2L, "h2", "h1");
-		Event third = event(3L, "h3", "broken");
+	void verifyChain_previousHashMismatchStopsAtFirstInvalidRecord() {
+		Event first = committedEvent(1L, "{\"name\":\"Alice\"}", null);
+		Event second = committedEvent(2L, "{\"name\":\"Bob\"}", "wrong-hash");
+		Event third = committedEvent(3L, "{\"name\":\"Carol\"}", second.getHash());
+		when(eventRepository.findAll(any(Sort.class))).thenReturn(List.of(first, second, third));
+
+		ChainVerificationResult result = eventService.verifyChain();
+
+		assertThat(result.getFirstInvalidRecordId()).isEqualTo(2L);
+		assertThat(result.getViolationDescription()).isEqualTo("PREVIOUS HASH MISMATCH");
+	}
+
+	@Test
+	void verifyChain_laterPreviousHashMismatchReportsThatRecordId() {
+		Event first = committedEvent(1L, "{\"name\":\"Alice\"}", null);
+		Event second = committedEvent(2L, "{\"name\":\"Bob\"}", first.getHash());
+		Event third = committedEvent(3L, "{\"name\":\"Carol\"}", "broken");
 		when(eventRepository.findAll(any(Sort.class))).thenReturn(List.of(first, second, third));
 
 		ChainVerificationResult result = eventService.verifyChain();
 
 		assertThat(result.getFirstInvalidRecordId()).isEqualTo(3L);
-		assertThat(result.getViolationDescription()).isEqualTo("HASH MISMATCH");
+		assertThat(result.getViolationDescription()).isEqualTo("PREVIOUS HASH MISMATCH");
 	}
 
 	@Test
@@ -493,12 +524,9 @@ class EventServiceTest {
 
 	@Test
 	void checkForRetention_validDaysKeepsChainIntactBeforeAndAfter() {
-		Event first = event(1L, "h1", null);
-		first.setTimestamp(Instant.now().minus(120, ChronoUnit.DAYS));
-		Event second = event(2L, "h2", "h1");
-		second.setTimestamp(Instant.now().minus(100, ChronoUnit.DAYS));
-		Event third = event(3L, "h3", "h2");
-		third.setTimestamp(Instant.now().minus(5, ChronoUnit.DAYS));
+		Event first = committedEvent(1L, "{\"name\":\"Alice\"}", null, Instant.now().minus(120, ChronoUnit.DAYS));
+		Event second = committedEvent(2L, "{\"name\":\"Bob\"}", first.getHash(), Instant.now().minus(100, ChronoUnit.DAYS));
+		Event third = committedEvent(3L, "{\"name\":\"Carol\"}", second.getHash(), Instant.now().minus(5, ChronoUnit.DAYS));
 		List<Event> chain = List.of(first, second, third);
 
 		when(eventRepository.findAll(any(Sort.class))).thenReturn(chain);
@@ -531,6 +559,7 @@ class EventServiceTest {
 		event.setResourceType("SESSION");
 		event.setResourceId("s-" + id);
 		event.setPayload("{}");
+		event.setSealedPayload("{}");
 		event.setTimestamp(now);
 		event.setHash(hash);
 		event.setPreviousHash(previousHash);
@@ -539,12 +568,18 @@ class EventServiceTest {
 	}
 
 	private Event committedEvent(Long id, String payload, String previousHash) {
+		return committedEvent(id, payload, previousHash, now);
+	}
+
+	private Event committedEvent(Long id, String payload, String previousHash, Instant timestamp) {
 		Event event = event(id, "placeholder", previousHash);
 		String sealed = PayloadMerkleHasher.seal(payload);
-		event.setPayload(sealed);
+		event.setPayload(payload);
+		event.setSealedPayload(sealed);
+		event.setTimestamp(timestamp);
 		event.setHash(PayloadMerkleHasher.computeEventHash(
 				event.getEventType(), event.getActorId(), event.getResourceType(), event.getResourceId(),
-				PayloadMerkleHasher.payloadRootFromPayload(sealed), event.getTimestamp(), previousHash));
+				PayloadMerkleHasher.payloadRootFromPayload(sealed), timestamp, previousHash));
 		return event;
 	}
 

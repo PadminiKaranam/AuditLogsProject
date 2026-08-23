@@ -171,12 +171,12 @@ class AuditLogsControllerTest {
 
 	@Test
 	void verifyChain_returnsMismatchDetails() throws Exception {
-		when(eventService.verifyChain()).thenReturn(new ChainVerificationResult(4L, "HASH MISMATCH"));
+		when(eventService.verifyChain()).thenReturn(new ChainVerificationResult(4L, "PREVIOUS HASH MISMATCH"));
 
 		mockMvc.perform(withAdmin(get("/audit/verify")))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.firstInvalidRecordId").value(4))
-				.andExpect(jsonPath("$.violationDescription").value("HASH MISMATCH"));
+				.andExpect(jsonPath("$.violationDescription").value("PREVIOUS HASH MISMATCH"));
 	}
 
 	@Test

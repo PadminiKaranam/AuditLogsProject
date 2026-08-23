@@ -21,7 +21,6 @@ import org.springframework.web.bind.annotation.RestController;
 import com.persistent.audit.exceptions.AccessForbiddenException;
 import com.persistent.audit.exceptions.ApiErrorResponse;
 import com.persistent.audit.model.ChainVerificationResult;
-import com.persistent.audit.model.Event;
 import com.persistent.audit.model.EventCreateRequest;
 import com.persistent.audit.model.EventCreateResponseObject;
 import com.persistent.audit.model.RetentionCheckResult;

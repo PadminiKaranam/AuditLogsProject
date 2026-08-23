@@ -66,6 +66,15 @@ class PayloadMerkleHasherTest {
 	}
 
 	@Test
+	void computeEventHash_usesCanonicalMillisecondTimestamp() {
+		Instant timestamp = Instant.parse("2026-08-22T10:15:30.123456789Z");
+		assertThat(PayloadMerkleHasher.formatTimestamp(timestamp)).isEqualTo("2026-08-22T10:15:30.123000Z");
+		assertThat(PayloadMerkleHasher.formatTimestamp(Instant.parse("2026-08-22T10:15:30Z")))
+				.isEqualTo("2026-08-22T10:15:30.000000Z");
+		assertThat(PayloadMerkleHasher.formatTimestamp(null)).isEmpty();
+	}
+
+	@Test
 	void computeEventHash_usesPayloadRootHashNotRawPayload() {
 		Instant timestamp = Instant.parse("2026-08-22T10:15:30Z");
 		String withRoot = PayloadMerkleHasher.computeEventHash(
