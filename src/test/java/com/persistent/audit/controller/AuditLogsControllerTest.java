@@ -5,6 +5,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -32,20 +33,34 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.validation.beanvalidation.LocalValidatorFactoryBean;
 
+import com.persistent.audit.exceptions.AuditExceptionHandler;
+import com.persistent.audit.exceptions.UserNotFoundException;
 import com.persistent.audit.model.ChainVerificationResult;
 import com.persistent.audit.model.Event;
 import com.persistent.audit.model.EventCreateResponseObject;
 import com.persistent.audit.model.RetentionCheckResult;
 import com.persistent.audit.service.EventService;
+import com.persistent.audit.service.UserService;
 
 @ExtendWith(MockitoExtension.class)
 class AuditLogsControllerTest {
 
+	private static final String ADMIN_USERNAME = "admin";
+	private static final String ADMIN_EMAIL = "admin@example.com";
+	private static final String REGULATOR_USERNAME = "regulator";
+	private static final String REGULATOR_EMAIL = "regulator@example.com";
+	private static final String USER_USERNAME = "viewer";
+	private static final String USER_EMAIL = "viewer@example.com";
+
 	@Mock
 	private EventService eventService;
+
+	@Mock
+	private UserService userService;
 
 	@InjectMocks
 	private AuditLogsController auditLogsController;
@@ -57,8 +72,19 @@ class AuditLogsControllerTest {
 		LocalValidatorFactoryBean validator = new LocalValidatorFactoryBean();
 		validator.afterPropertiesSet();
 		mockMvc = MockMvcBuilders.standaloneSetup(auditLogsController)
+				.setControllerAdvice(new AuditExceptionHandler())
 				.setValidator(validator)
 				.build();
+		lenient().when(userService.retrieveUserType(any(), any())).thenReturn("ADMIN");
+	}
+
+	private MockHttpServletRequestBuilder withAdmin(MockHttpServletRequestBuilder request) {
+		return request.header("username", ADMIN_USERNAME).header("useremail", ADMIN_EMAIL);
+	}
+
+	private MockHttpServletRequestBuilder withHeaders(
+			MockHttpServletRequestBuilder request, String username, String useremail) {
+		return request.header("username", username).header("useremail", useremail);
 	}
 
 	@Test
@@ -68,7 +94,7 @@ class AuditLogsControllerTest {
 		when(eventService.createEvent(eq("LOGIN"), eq("actor-1"), eq("SESSION"), eq("s-1"), eq("{}")))
 				.thenReturn(response);
 
-		mockMvc.perform(post("/audit/createEvent")
+		mockMvc.perform(withAdmin(post("/audit/createEvent"))
 				.contentType(MediaType.APPLICATION_JSON)
 				.content("""
 						{"eventType":"LOGIN","actorId":"actor-1","resourceType":"SESSION","resourceId":"s-1","payload":"{}"}
@@ -78,11 +104,13 @@ class AuditLogsControllerTest {
 				.andExpect(jsonPath("$.eventType").value("LOGIN"))
 				.andExpect(jsonPath("$.hash").doesNotExist())
 				.andExpect(jsonPath("$.previousHash").doesNotExist());
+
+		verify(userService).retrieveUserType(ADMIN_EMAIL, ADMIN_USERNAME);
 	}
 
 	@Test
 	void createEvent_missingMandatoryFieldsReturnsBadRequest() throws Exception {
-		mockMvc.perform(post("/audit/createEvent")
+		mockMvc.perform(withAdmin(post("/audit/createEvent"))
 				.contentType(MediaType.APPLICATION_JSON)
 				.content("""
 						{"eventType":"","actorId":"actor-1","resourceType":"SESSION","resourceId":"s-1","payload":"{}"}
@@ -94,7 +122,7 @@ class AuditLogsControllerTest {
 
 	@Test
 	void createEvent_malformedJsonReturnsBadRequest() throws Exception {
-		mockMvc.perform(post("/audit/createEvent")
+		mockMvc.perform(withAdmin(post("/audit/createEvent"))
 				.contentType(MediaType.APPLICATION_JSON)
 				.content("{not-json"))
 				.andExpect(status().isBadRequest());
@@ -106,7 +134,7 @@ class AuditLogsControllerTest {
 				.thenReturn(new PageImpl<>(List.of()));
 
 		ResponseEntity<Page<EventCreateResponseObject>> response = auditLogsController.getEvents(
-				null, null, null, null, null, null);
+				ADMIN_USERNAME, ADMIN_EMAIL, null, null, null, null, null, null);
 
 		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
 		assertThat(response.getBody().getContent()).isEmpty();
@@ -120,7 +148,7 @@ class AuditLogsControllerTest {
 		Instant from = Instant.parse("2026-08-01T00:00:00Z");
 		Instant to = Instant.parse("2026-08-31T23:59:59Z");
 		ResponseEntity<Page<EventCreateResponseObject>> response = auditLogsController.getEvents(
-				"LOGIN", "actor-1", "SESSION", "s-1", from, to);
+				ADMIN_USERNAME, ADMIN_EMAIL, "LOGIN", "actor-1", "SESSION", "s-1", from, to);
 
 		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
 		verify(eventService).getEvents(eq("LOGIN"), eq("actor-1"), eq("SESSION"), eq("s-1"), eq(from), eq(to));
@@ -128,7 +156,7 @@ class AuditLogsControllerTest {
 
 	@Test
 	void getEvents_invalidTimestampReturnsBadRequest() throws Exception {
-		mockMvc.perform(get("/audit/events").param("fromTimestamp", "not-a-date"))
+		mockMvc.perform(withAdmin(get("/audit/events")).param("fromTimestamp", "not-a-date"))
 				.andExpect(status().isBadRequest());
 	}
 
@@ -136,7 +164,7 @@ class AuditLogsControllerTest {
 	void verifyChain_returnsOkWithEmptyResult() throws Exception {
 		when(eventService.verifyChain()).thenReturn(new ChainVerificationResult());
 
-		mockMvc.perform(get("/audit/verify"))
+		mockMvc.perform(withAdmin(get("/audit/verify")))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.firstInvalidRecordId").doesNotExist())
 				.andExpect(jsonPath("$.violationDescription").doesNotExist());
@@ -146,7 +174,7 @@ class AuditLogsControllerTest {
 	void verifyChain_returnsMismatchDetails() throws Exception {
 		when(eventService.verifyChain()).thenReturn(new ChainVerificationResult(4L, "HASH MISMATCH"));
 
-		mockMvc.perform(get("/audit/verify"))
+		mockMvc.perform(withAdmin(get("/audit/verify")))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.firstInvalidRecordId").value(4))
 				.andExpect(jsonPath("$.violationDescription").value("HASH MISMATCH"));
@@ -156,7 +184,7 @@ class AuditLogsControllerTest {
 	void checkForRetention_validDaysReturnsOk() throws Exception {
 		when(eventService.checkForRetention(90)).thenReturn(new RetentionCheckResult(90, 2));
 
-		mockMvc.perform(put("/audit/checkForRetention").param("days", "90"))
+		mockMvc.perform(withAdmin(put("/audit/checkForRetention")).param("days", "90"))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.days").value(90))
 				.andExpect(jsonPath("$.archivedCount").value(2));
@@ -166,7 +194,7 @@ class AuditLogsControllerTest {
 
 	@Test
 	void checkForRetention_nonIntegerDaysReturnsBadRequest() throws Exception {
-		mockMvc.perform(put("/audit/checkForRetention").param("days", "ninety"))
+		mockMvc.perform(withAdmin(put("/audit/checkForRetention")).param("days", "ninety"))
 				.andExpect(status().isBadRequest());
 
 		verify(eventService, never()).checkForRetention(anyInt());
@@ -174,7 +202,7 @@ class AuditLogsControllerTest {
 
 	@Test
 	void checkForRetention_missingDaysReturnsBadRequest() throws Exception {
-		mockMvc.perform(put("/audit/checkForRetention"))
+		mockMvc.perform(withAdmin(put("/audit/checkForRetention")))
 				.andExpect(status().isBadRequest());
 
 		verify(eventService, never()).checkForRetention(anyInt());
@@ -182,9 +210,9 @@ class AuditLogsControllerTest {
 
 	@Test
 	void checkForRetention_nonPositiveDaysReturnsBadRequest() throws Exception {
-		mockMvc.perform(put("/audit/checkForRetention").param("days", "0"))
+		mockMvc.perform(withAdmin(put("/audit/checkForRetention")).param("days", "0"))
 				.andExpect(status().isBadRequest());
-		mockMvc.perform(put("/audit/checkForRetention").param("days", "-5"))
+		mockMvc.perform(withAdmin(put("/audit/checkForRetention")).param("days", "-5"))
 				.andExpect(status().isBadRequest());
 
 		verify(eventService, never()).checkForRetention(anyInt());
@@ -202,7 +230,7 @@ class AuditLogsControllerTest {
 		event.setHash("abc");
 		when(eventService.redactFieldsFromPayload(8L, "account")).thenReturn(event);
 
-		mockMvc.perform(put("/audit/redact").param("id", "8").param("fields", "account"))
+		mockMvc.perform(withAdmin(put("/audit/redact")).param("id", "8").param("fields", "account"))
 				.andExpect(status().isOk())
 				.andExpect(jsonPath("$.id").value(8))
 				.andExpect(jsonPath("$.payload").value("{\"account\":null,\"name\":\"Alice\"}"));
@@ -212,25 +240,25 @@ class AuditLogsControllerTest {
 
 	@Test
 	void redact_missingIdReturnsBadRequest() throws Exception {
-		mockMvc.perform(put("/audit/redact").param("fields", "account"))
+		mockMvc.perform(withAdmin(put("/audit/redact")).param("fields", "account"))
 				.andExpect(status().isBadRequest());
 	}
 
 	@Test
 	void redact_nonIntegerIdReturnsBadRequest() throws Exception {
-		mockMvc.perform(put("/audit/redact").param("id", "abc").param("fields", "account"))
+		mockMvc.perform(withAdmin(put("/audit/redact")).param("id", "abc").param("fields", "account"))
 				.andExpect(status().isBadRequest());
 	}
 
 	@Test
 	void redact_nonPositiveIdReturnsBadRequest() throws Exception {
-		mockMvc.perform(put("/audit/redact").param("id", "0").param("fields", "account"))
+		mockMvc.perform(withAdmin(put("/audit/redact")).param("id", "0").param("fields", "account"))
 				.andExpect(status().isBadRequest());
 	}
 
 	@Test
 	void redact_blankFieldsReturnsBadRequest() throws Exception {
-		mockMvc.perform(put("/audit/redact").param("id", "1").param("fields", "   "))
+		mockMvc.perform(withAdmin(put("/audit/redact")).param("id", "1").param("fields", "   "))
 				.andExpect(status().isBadRequest());
 	}
 
@@ -239,7 +267,7 @@ class AuditLogsControllerTest {
 		when(eventService.redactFieldsFromPayload(44L, "account"))
 				.thenThrow(new NoSuchElementException("Event not found for id=44"));
 
-		mockMvc.perform(put("/audit/redact").param("id", "44").param("fields", "account"))
+		mockMvc.perform(withAdmin(put("/audit/redact")).param("id", "44").param("fields", "account"))
 				.andExpect(status().isNotFound());
 	}
 
@@ -248,7 +276,7 @@ class AuditLogsControllerTest {
 		when(eventService.redactFieldsFromPayload(1L, "missing"))
 				.thenThrow(new IllegalArgumentException("payload does not contain field: missing"));
 
-		mockMvc.perform(put("/audit/redact").param("id", "1").param("fields", "missing"))
+		mockMvc.perform(withAdmin(put("/audit/redact")).param("id", "1").param("fields", "missing"))
 				.andExpect(status().isBadRequest());
 	}
 
@@ -257,7 +285,7 @@ class AuditLogsControllerTest {
 		byte[] csv = "id,eventType\n1,LOGIN\n".getBytes();
 		when(eventService.exportBundle("res-1", "actor-1")).thenReturn(csv);
 
-		mockMvc.perform(get("/audit/export").param("resourceId", "res-1").param("actorId", "actor-1"))
+		mockMvc.perform(withAdmin(get("/audit/export")).param("resourceId", "res-1").param("actorId", "actor-1"))
 				.andExpect(status().isOk())
 				.andExpect(header().string("Content-Disposition", "attachment; filename=\"Event_Bundle.csv\""))
 				.andExpect(content().contentType("text/csv"))
@@ -270,9 +298,106 @@ class AuditLogsControllerTest {
 	void exportBundle_optionalFiltersArePassedThrough() throws Exception {
 		when(eventService.exportBundle(null, null)).thenReturn("id\n".getBytes());
 
-		mockMvc.perform(get("/audit/export"))
+		mockMvc.perform(withAdmin(get("/audit/export")))
 				.andExpect(status().isOk());
 
 		verify(eventService).exportBundle(null, null);
+	}
+
+	@Test
+	void missingUsernameHeaderReturnsBadRequest() throws Exception {
+		mockMvc.perform(get("/audit/verify").header("useremail", ADMIN_EMAIL))
+				.andExpect(status().isBadRequest());
+	}
+
+	@Test
+	void missingUseremailHeaderReturnsBadRequest() throws Exception {
+		mockMvc.perform(get("/audit/verify").header("username", ADMIN_USERNAME))
+				.andExpect(status().isBadRequest());
+	}
+
+	@Test
+	void blankHeadersReturnBadRequest() throws Exception {
+		mockMvc.perform(get("/audit/verify").header("username", "  ").header("useremail", "  "))
+				.andExpect(status().isBadRequest());
+	}
+
+	@Test
+	void unknownUserReturnsUnauthorized() throws Exception {
+		when(userService.retrieveUserType(ADMIN_EMAIL, ADMIN_USERNAME))
+				.thenThrow(new UserNotFoundException("User not found for the given username and useremail"));
+
+		mockMvc.perform(withAdmin(get("/audit/verify")))
+				.andExpect(status().isUnauthorized())
+				.andExpect(jsonPath("$.status").value(401));
+	}
+
+	@Test
+	void userTypeForbiddenOnAdminEndpoints() throws Exception {
+		when(userService.retrieveUserType(USER_EMAIL, USER_USERNAME)).thenReturn("USER");
+
+		mockMvc.perform(withHeaders(post("/audit/createEvent"), USER_USERNAME, USER_EMAIL)
+				.contentType(MediaType.APPLICATION_JSON)
+				.content("""
+						{"eventType":"LOGIN","actorId":"actor-1","resourceType":"SESSION","resourceId":"s-1","payload":"{}"}
+						"""))
+				.andExpect(status().isForbidden());
+		mockMvc.perform(withHeaders(get("/audit/verify"), USER_USERNAME, USER_EMAIL))
+				.andExpect(status().isForbidden());
+		mockMvc.perform(withHeaders(put("/audit/checkForRetention"), USER_USERNAME, USER_EMAIL).param("days", "90"))
+				.andExpect(status().isForbidden());
+		mockMvc.perform(withHeaders(put("/audit/redact"), USER_USERNAME, USER_EMAIL)
+				.param("id", "1").param("fields", "account"))
+				.andExpect(status().isForbidden());
+		mockMvc.perform(withHeaders(get("/audit/events"), USER_USERNAME, USER_EMAIL))
+				.andExpect(status().isForbidden());
+		mockMvc.perform(withHeaders(get("/audit/export"), USER_USERNAME, USER_EMAIL))
+				.andExpect(status().isForbidden());
+
+		verify(eventService, never()).createEvent(any(), any(), any(), any(), any());
+		verify(eventService, never()).verifyChain();
+		verify(eventService, never()).checkForRetention(anyInt());
+		verify(eventService, never()).exportBundle(any(), any());
+	}
+
+	@Test
+	void regulatorAllowedOnGetEventsAndExport() throws Exception {
+		when(userService.retrieveUserType(REGULATOR_EMAIL, REGULATOR_USERNAME)).thenReturn("REGULATOR");
+		when(eventService.getEvents(isNull(), isNull(), isNull(), isNull(), isNull(), isNull()))
+				.thenReturn(new PageImpl<>(List.of()));
+		when(eventService.exportBundle(null, null)).thenReturn("id\n".getBytes());
+
+		ResponseEntity<Page<EventCreateResponseObject>> eventsResponse = auditLogsController.getEvents(
+				REGULATOR_USERNAME, REGULATOR_EMAIL, null, null, null, null, null, null);
+		assertThat(eventsResponse.getStatusCode()).isEqualTo(HttpStatus.OK);
+
+		mockMvc.perform(withHeaders(get("/audit/export"), REGULATOR_USERNAME, REGULATOR_EMAIL))
+				.andExpect(status().isOk());
+	}
+
+	@Test
+	void regulatorForbiddenOnAdminOnlyEndpoints() throws Exception {
+		when(userService.retrieveUserType(REGULATOR_EMAIL, REGULATOR_USERNAME)).thenReturn("REGULATOR");
+
+		mockMvc.perform(withHeaders(post("/audit/createEvent"), REGULATOR_USERNAME, REGULATOR_EMAIL)
+				.contentType(MediaType.APPLICATION_JSON)
+				.content("""
+						{"eventType":"LOGIN","actorId":"actor-1","resourceType":"SESSION","resourceId":"s-1","payload":"{}"}
+						"""))
+				.andExpect(status().isForbidden());
+		mockMvc.perform(withHeaders(get("/audit/verify"), REGULATOR_USERNAME, REGULATOR_EMAIL))
+				.andExpect(status().isForbidden());
+		mockMvc.perform(withHeaders(put("/audit/checkForRetention"), REGULATOR_USERNAME, REGULATOR_EMAIL)
+				.param("days", "90"))
+				.andExpect(status().isForbidden());
+		mockMvc.perform(withHeaders(put("/audit/redact"), REGULATOR_USERNAME, REGULATOR_EMAIL)
+				.param("id", "1").param("fields", "account"))
+				.andExpect(status().isForbidden())
+				.andExpect(jsonPath("$.error").value("Access Forbidden"));
+
+		verify(eventService, never()).createEvent(any(), any(), any(), any(), any());
+		verify(eventService, never()).verifyChain();
+		verify(eventService, never()).checkForRetention(anyInt());
+		verify(eventService, never()).redactFieldsFromPayload(any(), any());
 	}
 }
