@@ -50,12 +50,6 @@ public class EventService {
 		String hash = computeHash(eventType, actorId, resourceType, resourceId, sealedPayload, timestamp, previousHash);
 		log.debug("Computed hash={}", hash);
 
-		log.info("CREATE EVENT DEBUG:");
-        log.info("  normalizedPayload: {}", normalizedPayload);
-        log.info("  sealedPayload: {}", sealedPayload);
-        log.info("  timestamp: {}", timestamp);
-        log.info("  computed hash: {}", hash);
-
 		Event event = new Event();
 		event.setEventType(eventType);
 		event.setActorId(actorId);
@@ -110,13 +104,6 @@ public class EventService {
         for (Event event : events) {
             String recalculatedHash = computeHash(event);
             
-			log.info("VERIFY EVENT id={} DEBUG:", event.getId());
-            log.info("  stored hash:       {}", event.getHash());
-            log.info("  recalculated hash: {}", recalculatedHash);
-            log.info("  hashes match: {}", Objects.equals(event.getHash(), recalculatedHash));
-            log.info("  sealedPayload: {}", event.getSealedPayload());
-            log.info("  timestamp: {}", event.getTimestamp());
-			
             // Check if event's own hash matches (detects data tampering)
             if (!Objects.equals(event.getHash(), recalculatedHash)) {
                 return invalid(event.getId(), "EVENT HASH MISMATCH");
@@ -293,15 +280,4 @@ public class EventService {
 }
 
 
-	// private String computeHash(String eventType, String actorId, String resourceType, String resourceId,
-	// 		String payload, Instant timestamp, String previousHash) {
-	// 	try {
-	// 		String payloadRootHash = PayloadMerkleHasher.payloadRootFromPayload(payload);
-	// 		return PayloadMerkleHasher.computeEventHash(eventType, actorId, resourceType, resourceId, payloadRootHash,
-	// 				timestamp, previousHash);
-	// 	} catch (RuntimeException e) {
-	// 		log.error("Error while hashing event eventType={} actorId={}", eventType, actorId, e);
-	// 		throw e;
-	// 	}
-	// }
 }
