@@ -1,0 +1,90 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>JwtAuthenticationFilter.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report"></a> &gt; <a href="index.source.html" class="el_package">com.persistent.audit.security</a> &gt; <span class="el_source">JwtAuthenticationFilter.java</span></div><h1>JwtAuthenticationFilter.java</h1><pre class="source lang-java linenums">package com.persistent.audit.security;
+
+import java.io.IOException;
+
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.security.core.userdetails.UserDetails;
+import org.springframework.security.core.userdetails.UserDetailsService;
+import org.springframework.security.web.authentication.WebAuthenticationDetailsSource;
+import org.springframework.stereotype.Component;
+import org.springframework.web.filter.OncePerRequestFilter;
+
+import com.persistent.audit.exceptions.JwtAuthenticationException;
+
+import jakarta.servlet.FilterChain;
+import jakarta.servlet.ServletException;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
+import lombok.extern.slf4j.Slf4j;
+
+<span class="fc" id="L24">@Slf4j</span>
+@Component
+public class JwtAuthenticationFilter extends OncePerRequestFilter {
+
+	public static final String BEARER_PREFIX = &quot;Bearer &quot;;
+
+	private final JwtService jwtService;
+	private final UserDetailsService userDetailsService;
+
+<span class="fc" id="L33">	public JwtAuthenticationFilter(JwtService jwtService, UserDetailsService userDetailsService) {</span>
+<span class="fc" id="L34">		this.jwtService = jwtService;</span>
+<span class="fc" id="L35">		this.userDetailsService = userDetailsService;</span>
+<span class="fc" id="L36">	}</span>
+
+	@Override
+	protected boolean shouldNotFilter(HttpServletRequest request) {
+<span class="fc" id="L40">		String path = request.getServletPath();</span>
+<span class="fc bfc" id="L41" title="All 4 branches covered.">		return path.equals(&quot;/audit/auth/login&quot;) || path.startsWith(&quot;/h2-console&quot;);</span>
+	}
+
+	@Override
+	protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain filterChain)
+			throws ServletException, IOException {
+<span class="fc" id="L47">		String header = request.getHeader(HttpHeaders.AUTHORIZATION);</span>
+<span class="fc bfc" id="L48" title="All 4 branches covered.">		if (header == null || header.isBlank()) {</span>
+<span class="fc" id="L49">			filterChain.doFilter(request, response);</span>
+<span class="fc" id="L50">			return;</span>
+		}
+<span class="fc bfc" id="L52" title="All 2 branches covered.">		if (!header.regionMatches(true, 0, BEARER_PREFIX, 0, BEARER_PREFIX.length())) {</span>
+<span class="fc" id="L53">			writeUnauthorized(response, &quot;Authorization header must be Bearer token&quot;);</span>
+<span class="fc" id="L54">			return;</span>
+		}
+<span class="fc" id="L56">		String token = header.substring(BEARER_PREFIX.length()).trim();</span>
+<span class="fc bfc" id="L57" title="All 2 branches covered.">		if (token.isEmpty()) {</span>
+<span class="fc" id="L58">			writeUnauthorized(response, &quot;JWT is missing&quot;);</span>
+<span class="fc" id="L59">			return;</span>
+		}
+		try {
+<span class="fc" id="L62">			String username = jwtService.extractUsername(token);</span>
+<span class="fc bfc" id="L63" title="All 2 branches covered.">			if (SecurityContextHolder.getContext().getAuthentication() == null) {</span>
+<span class="fc" id="L64">				UserDetails userDetails = userDetailsService.loadUserByUsername(username);</span>
+<span class="fc" id="L65">				UsernamePasswordAuthenticationToken authentication = new UsernamePasswordAuthenticationToken(</span>
+<span class="fc" id="L66">						userDetails, null, userDetails.getAuthorities());</span>
+<span class="fc" id="L67">				authentication.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));</span>
+<span class="fc" id="L68">				SecurityContextHolder.getContext().setAuthentication(authentication);</span>
+			}
+<span class="fc" id="L70">			filterChain.doFilter(request, response);</span>
+<span class="fc" id="L71">		} catch (JwtAuthenticationException | org.springframework.security.core.userdetails.UsernameNotFoundException ex) {</span>
+<span class="fc" id="L72">			log.debug(&quot;JWT authentication failed: {}&quot;, ex.getMessage());</span>
+<span class="fc" id="L73">			writeUnauthorized(response, ex.getMessage());</span>
+<span class="fc" id="L74">		}</span>
+<span class="fc" id="L75">	}</span>
+
+	static void writeUnauthorized(HttpServletResponse response, String message) throws IOException {
+<span class="fc" id="L78">		response.setStatus(HttpStatus.UNAUTHORIZED.value());</span>
+<span class="fc" id="L79">		response.setContentType(MediaType.APPLICATION_JSON_VALUE);</span>
+<span class="fc" id="L80">		response.getWriter().write(&quot;{\&quot;status\&quot;:401,\&quot;error\&quot;:\&quot;&quot; + escape(message) + &quot;\&quot;}&quot;);</span>
+<span class="fc" id="L81">	}</span>
+
+	private static String escape(String message) {
+<span class="fc bfc" id="L84" title="All 2 branches covered.">		if (message == null) {</span>
+<span class="fc" id="L85">			return &quot;Unauthorized&quot;;</span>
+		}
+<span class="fc" id="L87">		return message.replace(&quot;\\&quot;, &quot;\\\\&quot;).replace(&quot;\&quot;&quot;, &quot;\\\&quot;&quot;);</span>
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.15.202606040825</span></div></body></html>

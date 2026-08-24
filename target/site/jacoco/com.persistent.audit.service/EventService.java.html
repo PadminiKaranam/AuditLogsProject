@@ -1,0 +1,272 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>EventService.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report"></a> &gt; <a href="index.source.html" class="el_package">com.persistent.audit.service</a> &gt; <span class="el_source">EventService.java</span></div><h1>EventService.java</h1><pre class="source lang-java linenums">package com.persistent.audit.service;
+
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.NoSuchElementException;
+import java.util.Objects;
+
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.util.StringUtils;
+
+import com.persistent.audit.crypto.PayloadMerkleHasher;
+import com.persistent.audit.model.BundleExportStructureResponse;
+import com.persistent.audit.model.ChainVerificationResult;
+import com.persistent.audit.model.Event;
+import com.persistent.audit.model.EventCreateResponseObject;
+import com.persistent.audit.model.EventStatus;
+import com.persistent.audit.model.RetentionCheckResult;
+import com.persistent.audit.repository.EventRepository;
+import com.persistent.audit.util.PaginationUtils;
+
+import lombok.extern.slf4j.Slf4j;
+
+<span class="fc" id="L29">@Slf4j</span>
+@Service
+public class EventService {
+
+	private final EventRepository eventRepository;
+
+<span class="fc" id="L35">	public EventService(EventRepository eventRepository) {</span>
+<span class="fc" id="L36">		this.eventRepository = eventRepository;</span>
+<span class="fc" id="L37">	}</span>
+
+	@Transactional
+	public EventCreateResponseObject createEvent(String eventType, String actorId, String resourceType,
+			String resourceId, String payload) {
+<span class="fc" id="L42">		log.info(&quot;Creating event eventType={} actorId={} resourceType={} resourceId={}&quot;,</span>
+				eventType, actorId, resourceType, resourceId);
+<span class="fc" id="L44">		Instant timestamp = Instant.now();</span>
+<span class="fc bfc" id="L45" title="All 2 branches covered.">		String normalizedPayload = StringUtils.hasText(payload) ? payload : &quot;{}&quot;;</span>
+<span class="fc" id="L46">		String previousHash = eventRepository.findTopByOrderByIdDesc()</span>
+<span class="fc" id="L47">				.map(Event::getHash)</span>
+<span class="fc" id="L48">				.orElse(null);</span>
+<span class="fc" id="L49">		log.debug(&quot;Hashing event with previousHash={}&quot;, previousHash);</span>
+<span class="fc" id="L50">		String sealedPayload = PayloadMerkleHasher.seal(normalizedPayload);</span>
+<span class="fc" id="L51">		String hash = computeHash(eventType, actorId, resourceType, resourceId, sealedPayload, timestamp, previousHash);</span>
+<span class="fc" id="L52">		log.debug(&quot;Computed hash={}&quot;, hash);</span>
+
+<span class="fc" id="L54">		Event event = new Event();</span>
+<span class="fc" id="L55">		event.setEventType(eventType);</span>
+<span class="fc" id="L56">		event.setActorId(actorId);</span>
+<span class="fc" id="L57">		event.setResourceType(resourceType);</span>
+<span class="fc" id="L58">		event.setResourceId(resourceId);</span>
+<span class="fc" id="L59">		event.setPayload(normalizedPayload);</span>
+<span class="fc" id="L60">		event.setSealedPayload(sealedPayload);</span>
+<span class="fc" id="L61">		event.setTimestamp(timestamp);</span>
+<span class="fc" id="L62">		event.setHash(hash);</span>
+<span class="fc" id="L63">		event.setPreviousHash(previousHash);</span>
+<span class="fc" id="L64">		event.setStatus(EventStatus.ACTIVE);</span>
+<span class="fc" id="L65">		EventCreateResponseObject saved = EventCreateResponseObject.from(eventRepository.save(event));</span>
+<span class="fc" id="L66">		log.info(&quot;Saved event id={} hash computed successfully&quot;, saved.getId());</span>
+<span class="fc" id="L67">		return saved;</span>
+	}
+
+	@Transactional(readOnly = true)
+	public Page&lt;EventCreateResponseObject&gt; getEvents(String eventType, String actorId, String resourceType,
+			String resourceId, Instant fromTimestamp, Instant toTimestamp) {
+<span class="fc" id="L73">		return getEvents(eventType, actorId, resourceType, resourceId, fromTimestamp, toTimestamp, 0);</span>
+	}
+
+	@Transactional(readOnly = true)
+	public Page&lt;EventCreateResponseObject&gt; getEvents(String eventType, String actorId, String resourceType,
+			String resourceId, Instant fromTimestamp, Instant toTimestamp, int page) {
+<span class="fc" id="L79">		log.info(&quot;Fetching events page={} eventType={} actorId={} resourceType={} resourceId={} fromTimestamp={} toTimestamp={}&quot;,</span>
+<span class="fc" id="L80">				page, eventType, actorId, resourceType, resourceId, fromTimestamp, toTimestamp);</span>
+<span class="fc" id="L81">		Pageable pageable = PaginationUtils.pageRequest(page);</span>
+		Page&lt;Event&gt; events;
+<span class="fc bfc" id="L83" title="All 2 branches covered.">		if (hasFilters(eventType, actorId, resourceType, resourceId, fromTimestamp, toTimestamp)) {</span>
+<span class="fc" id="L84">			events = eventRepository.findEvents(</span>
+<span class="fc" id="L85">					blankToNull(eventType),</span>
+<span class="fc" id="L86">					blankToNull(actorId),</span>
+<span class="fc" id="L87">					blankToNull(resourceType),</span>
+<span class="fc" id="L88">					blankToNull(resourceId),</span>
+					fromTimestamp,
+					toTimestamp,
+					pageable);
+		} else {
+<span class="fc" id="L93">			events = eventRepository.findAll(pageable);</span>
+		}
+<span class="fc" id="L95">		log.debug(&quot;Fetched {} events of {} total for page {}&quot;, events.getNumberOfElements(), events.getTotalElements(),</span>
+<span class="fc" id="L96">				pageable.getPageNumber());</span>
+<span class="fc" id="L97">		return events.map(EventCreateResponseObject::from);</span>
+	}
+
+	@Transactional(readOnly = true)
+	public ChainVerificationResult verifyChain() {
+<span class="fc" id="L102">		List&lt;Event&gt; events = eventRepository.findAll(Sort.by(Sort.Direction.ASC, &quot;id&quot;));</span>
+<span class="fc" id="L103">		String expectedPreviousHash = null;</span>
+
+<span class="fc bfc" id="L105" title="All 2 branches covered.">		for (Event event : events) {</span>
+<span class="fc" id="L106">			String recalculatedHash = computeHash(event);</span>
+<span class="fc bfc" id="L107" title="All 2 branches covered.">			if (!Objects.equals(event.getHash(), recalculatedHash)) {</span>
+<span class="fc" id="L108">				return invalid(event.getId(), &quot;EVENT HASH MISMATCH&quot;);</span>
+			}
+<span class="fc bfc" id="L110" title="All 2 branches covered.">			if (!Objects.equals(event.getPreviousHash(), expectedPreviousHash)) {</span>
+<span class="fc" id="L111">				return invalid(event.getId(), &quot;PREVIOUS HASH MISMATCH&quot;);</span>
+			}
+<span class="fc" id="L113">			expectedPreviousHash = event.getHash();</span>
+<span class="fc" id="L114">		}</span>
+
+<span class="fc" id="L116">		return new ChainVerificationResult();</span>
+	}
+
+	private ChainVerificationResult invalid(Long eventId, String reason) {
+<span class="fc" id="L120">		log.warn(&quot;Chain verification failed eventId={} reason={}&quot;, eventId, reason);</span>
+<span class="fc" id="L121">		return new ChainVerificationResult(eventId, reason);</span>
+	}
+
+	@Transactional
+	public RetentionCheckResult checkForRetention(int days) {
+<span class="fc" id="L126">		log.info(&quot;Checking retention policy days={}&quot;, days);</span>
+<span class="fc" id="L127">		Instant cutoff = Instant.now().minus(days, ChronoUnit.DAYS);</span>
+<span class="fc" id="L128">		List&lt;Event&gt; activeEvents = eventRepository.findByStatus(EventStatus.ACTIVE);</span>
+<span class="fc" id="L129">		int archivedCount = 0;</span>
+<span class="fc bfc" id="L130" title="All 2 branches covered.">		for (Event event : activeEvents) {</span>
+<span class="fc bfc" id="L131" title="All 4 branches covered.">			if (event.getTimestamp() != null &amp;&amp; event.getTimestamp().isBefore(cutoff)) {</span>
+<span class="fc" id="L132">				event.setStatus(EventStatus.ARCHIVED);</span>
+<span class="fc" id="L133">				eventRepository.save(event);</span>
+<span class="fc" id="L134">				archivedCount++;</span>
+<span class="fc" id="L135">				log.debug(&quot;Archived event id={} timestamp={}&quot;, event.getId(), event.getTimestamp());</span>
+			}
+<span class="fc" id="L137">		}</span>
+<span class="fc" id="L138">		log.info(&quot;Retention check completed days={} archivedCount={}&quot;, days, archivedCount);</span>
+<span class="fc" id="L139">		return new RetentionCheckResult(days, archivedCount);</span>
+	}
+
+	@Transactional
+	public EventCreateResponseObject redactFieldsFromPayload(Long id, String fields) {
+<span class="fc bfc" id="L144" title="All 2 branches covered.">		if (id == null) {</span>
+<span class="fc" id="L145">			throw new IllegalArgumentException(&quot;id is required&quot;);</span>
+		}
+<span class="fc bfc" id="L147" title="All 2 branches covered.">		if (!StringUtils.hasText(fields)) {</span>
+<span class="fc" id="L148">			throw new IllegalArgumentException(&quot;fields is required&quot;);</span>
+		}
+<span class="fc" id="L150">		List&lt;String&gt; keys = parseFieldKeys(fields);</span>
+<span class="fc bfc" id="L151" title="All 2 branches covered.">		if (keys.isEmpty()) {</span>
+<span class="fc" id="L152">			throw new IllegalArgumentException(&quot;fields must contain at least one payload key&quot;);</span>
+		}
+<span class="fc" id="L154">		log.info(&quot;Redacting payload fields eventId={} fieldCount={}&quot;, id, keys.size());</span>
+<span class="fc" id="L155">		Event event = eventRepository.findById(id)</span>
+<span class="fc" id="L156">				.orElseThrow(() -&gt; new NoSuchElementException(&quot;Event not found for id=&quot; + id));</span>
+<span class="fc" id="L157">		String redactedSealedPayload = PayloadMerkleHasher.redact(event.getSealedPayload(), keys);</span>
+<span class="fc" id="L158">		event.setSealedPayload(redactedSealedPayload);</span>
+<span class="fc" id="L159">		String redactedPayload = PayloadMerkleHasher.redact(event.getPayload(), keys);</span>
+<span class="fc" id="L160">		event.setPayload(redactedPayload);</span>
+<span class="fc" id="L161">		EventCreateResponseObject saved = EventCreateResponseObject.from(eventRepository.save(event));</span>
+<span class="fc" id="L162">		log.info(&quot;Redaction completed eventId={} hash unchanged&quot;, saved.getId());</span>
+<span class="fc" id="L163">		return saved;</span>
+	}
+
+	@Transactional(readOnly = true)
+	public byte[] exportBundle(String resourceId, String actorId) {
+<span class="fc" id="L168">		log.info(&quot;Exporting event bundle actorId={} resourceId={}&quot;, actorId, resourceId);</span>
+<span class="fc" id="L169">		List&lt;Event&gt; events = eventRepository.findForExport(blankToNull(actorId), blankToNull(resourceId));</span>
+<span class="fc" id="L170">		List&lt;BundleExportStructureResponse&gt; rows = new ArrayList&lt;&gt;();</span>
+<span class="fc bfc" id="L171" title="All 2 branches covered.">		for (Event event : events) {</span>
+<span class="fc" id="L172">			String chainMetadata = PayloadMerkleHasher.sha256(</span>
+<span class="fc" id="L173">					nullToEmpty(event.getHash()) + nullToEmpty(event.getPreviousHash()));</span>
+<span class="fc" id="L174">			rows.add(new BundleExportStructureResponse(</span>
+<span class="fc" id="L175">					event.getId(),</span>
+<span class="fc" id="L176">					event.getEventType(),</span>
+<span class="fc" id="L177">					event.getActorId(),</span>
+<span class="fc" id="L178">					event.getResourceType(),</span>
+<span class="fc" id="L179">					event.getResourceId(),</span>
+<span class="fc" id="L180">					event.getPayload(),</span>
+<span class="fc" id="L181">					event.getTimestamp(),</span>
+					chainMetadata));
+<span class="fc" id="L183">		}</span>
+<span class="fc" id="L184">		byte[] csv = toCsv(rows);</span>
+<span class="fc" id="L185">		log.info(&quot;Exported event bundle rowCount={} file=Event_Bundle.csv&quot;, rows.size());</span>
+<span class="fc" id="L186">		return csv;</span>
+	}
+
+	private String nullToEmpty(String value) {
+<span class="fc bfc" id="L190" title="All 2 branches covered.">		return value == null ? &quot;&quot; : value;</span>
+	}
+
+	private byte[] toCsv(List&lt;BundleExportStructureResponse&gt; rows) {
+<span class="fc" id="L194">		StringBuilder csv = new StringBuilder();</span>
+<span class="fc" id="L195">		csv.append(&quot;id,eventType,actorId,resourceType,resourceId,payload,timestamp,chainMetadata\n&quot;);</span>
+<span class="fc bfc" id="L196" title="All 2 branches covered.">		for (BundleExportStructureResponse row : rows) {</span>
+<span class="fc" id="L197">			csv.append(csvValue(row.getId()))</span>
+<span class="fc" id="L198">					.append(',')</span>
+<span class="fc" id="L199">					.append(csvValue(row.getEventType()))</span>
+<span class="fc" id="L200">					.append(',')</span>
+<span class="fc" id="L201">					.append(csvValue(row.getActorId()))</span>
+<span class="fc" id="L202">					.append(',')</span>
+<span class="fc" id="L203">					.append(csvValue(row.getResourceType()))</span>
+<span class="fc" id="L204">					.append(',')</span>
+<span class="fc" id="L205">					.append(csvValue(row.getResourceId()))</span>
+<span class="fc" id="L206">					.append(',')</span>
+<span class="fc" id="L207">					.append(csvValue(row.getPayload()))</span>
+<span class="fc" id="L208">					.append(',')</span>
+<span class="fc bfc" id="L209" title="All 2 branches covered.">					.append(csvValue(row.getTimestamp() == null ? null : row.getTimestamp().toString()))</span>
+<span class="fc" id="L210">					.append(',')</span>
+<span class="fc" id="L211">					.append(csvValue(row.getChainMetadata()))</span>
+<span class="fc" id="L212">					.append('\n');</span>
+<span class="fc" id="L213">		}</span>
+<span class="fc" id="L214">		return csv.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8);</span>
+	}
+
+	private String csvValue(Object value) {
+<span class="fc bfc" id="L218" title="All 2 branches covered.">		if (value == null) {</span>
+<span class="fc" id="L219">			return &quot;&quot;;</span>
+		}
+<span class="fc" id="L221">		String text = String.valueOf(value);</span>
+<span class="fc bfc" id="L222" title="All 8 branches covered.">		if (text.contains(&quot;,&quot;) || text.contains(&quot;\&quot;&quot;) || text.contains(&quot;\n&quot;) || text.contains(&quot;\r&quot;)) {</span>
+<span class="fc" id="L223">			return &quot;\&quot;&quot; + text.replace(&quot;\&quot;&quot;, &quot;\&quot;\&quot;&quot;) + &quot;\&quot;&quot;;</span>
+		}
+<span class="fc" id="L225">		return text;</span>
+	}
+
+	private List&lt;String&gt; parseFieldKeys(String fields) {
+<span class="fc" id="L229">		List&lt;String&gt; keys = new ArrayList&lt;&gt;();</span>
+<span class="fc bfc" id="L230" title="All 2 branches covered.">		for (String token : fields.split(&quot;,&quot;)) {</span>
+<span class="fc" id="L231">			String key = token.trim();</span>
+<span class="fc bfc" id="L232" title="All 4 branches covered.">			if (StringUtils.hasText(key) &amp;&amp; !keys.contains(key)) {</span>
+<span class="fc" id="L233">				keys.add(key);</span>
+			}
+		}
+<span class="fc" id="L236">		return keys;</span>
+	}
+
+	private boolean hasFilters(String eventType, String actorId, String resourceType, String resourceId,
+			Instant fromTimestamp, Instant toTimestamp) {
+<span class="fc bfc" id="L241" title="All 2 branches covered.">		return StringUtils.hasText(eventType)</span>
+<span class="fc bfc" id="L242" title="All 2 branches covered.">				|| StringUtils.hasText(actorId)</span>
+<span class="fc bfc" id="L243" title="All 2 branches covered.">				|| StringUtils.hasText(resourceType)</span>
+<span class="fc bfc" id="L244" title="All 6 branches covered.">				|| StringUtils.hasText(resourceId)</span>
+				|| fromTimestamp != null
+				|| toTimestamp != null;
+	}
+
+	private String blankToNull(String value) {
+<span class="fc bfc" id="L250" title="All 2 branches covered.">		return StringUtils.hasText(value) ? value : null;</span>
+	}
+
+	private String computeHash(Event event) {
+<span class="fc" id="L254">		String payloadRootHash = PayloadMerkleHasher.payloadRootFromPayload(event.getSealedPayload());</span>
+<span class="fc" id="L255">		return PayloadMerkleHasher.computeEventHash(</span>
+<span class="fc" id="L256">				event.getEventType(),</span>
+<span class="fc" id="L257">				event.getActorId(),</span>
+<span class="fc" id="L258">				event.getResourceType(),</span>
+<span class="fc" id="L259">				event.getResourceId(),</span>
+				payloadRootHash,
+<span class="fc" id="L261">				event.getTimestamp(),</span>
+<span class="fc" id="L262">				event.getPreviousHash());</span>
+	}
+
+	private String computeHash(String eventType, String actorId, String resourceType, String resourceId,
+			String sealedPayload, Instant timestamp, String previousHash) {
+<span class="fc" id="L267">		String payloadRootHash = PayloadMerkleHasher.payloadRootFromPayload(sealedPayload);</span>
+<span class="fc" id="L268">		return PayloadMerkleHasher.computeEventHash(eventType, actorId, resourceType, resourceId,</span>
+				payloadRootHash, timestamp, previousHash);
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.15.202606040825</span></div></body></html>

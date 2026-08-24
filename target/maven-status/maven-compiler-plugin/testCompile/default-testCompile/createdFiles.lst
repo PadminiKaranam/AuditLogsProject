@@ -1,0 +1,16 @@
+com\persistent\audit\security\AuditUserPrincipalTest.class
+com\persistent\audit\security\JwtAuthorizationIntegrationTest.class
+com\persistent\audit\security\JwtServiceTest.class
+com\persistent\audit\AuditApplicationTests.class
+com\persistent\audit\crypto\PayloadMerkleHasherTest.class
+com\persistent\audit\service\EventServiceTest.class
+com\persistent\audit\security\SecurityConfigTest.class
+com\persistent\audit\exceptions\AuditExceptionHandlerTest.class
+com\persistent\audit\security\AuditUserDetailsServiceTest.class
+com\persistent\audit\exceptions\AuditExceptionHandlerTest$Dummy.class
+com\persistent\audit\model\ModelCoverageTest.class
+com\persistent\audit\util\PaginationUtilsTest.class
+com\persistent\audit\exceptions\JwtAuthenticationExceptionTest.class
+com\persistent\audit\controller\AuditLogsControllerTest.class
+com\persistent\audit\security\JwtAuthenticationFilterTest.class
+com\persistent\audit\service\UserServiceTest.class

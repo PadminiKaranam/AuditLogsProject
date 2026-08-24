@@ -1,109 +1,111 @@
 # Tamper-Evident Audit Log Service
 
-A Spring Boot prototype for recording, querying, verifying, retaining, redacting, and exporting audit events. The service is designed around an append-only event history and a SHA-256 hash chain.
-
-> This document is a repository deliverable template. Update paths, commands, database details, and endpoint examples to match the final codebase before submission.
-
-## Assignment coverage
-
-|Scenario|Capability|Status|
-|-|-|-|
-|A|Event creation|Implemented|
-|A|Filtered and paginated queries|Implemented|
-|A|Hash-chain verification|Implemented|
-|A|Direct data-store tamper detection|Implemented and tested|
-|B|Retention/archive handling|Implemented|
-|B|Structured redaction without changing the event hash|Implemented|
-|B|CSV bulk export with chain metadata|Implemented|
-|C|Compliance requirement clarification and RBAC design|Implemented in scope described below|
+Spring Boot service for recording, querying, verifying, retaining, redacting, and exporting audit events. Events are append-only and linked by a SHA-256 hash chain.
 
 ## Prerequisites
 
-* Java 
-* Maven 
-* Git
+* Java 17
+* Maven 3.9+ (or the included `mvnw` / `mvnw.cmd`)
 
-## Run locally
+## Local run (prototype profile)
 
-1. Clone the private repository.
-2. Configure the database URL, username, password, and application port.
-3. Start the service:
+The default profile is for local development. It uses an H2 file database, allows the H2 console, and ships prototype JWT/CORS values. **Do not use those defaults in production.**
 
 ```bash
 ./mvnw spring-boot:run
 ```
 
-4. Confirm the service is running:
+Windows:
 
 ```bash
-curl http://localhost:8081/actuator/health
+.\mvnw.cmd spring-boot:run
 ```
 
-Replace the command and port if the project uses different values.
+The API listens on `http://localhost:8081`. Application users must already exist in the H2 `USERS` table (username, bcrypt password, `user_type`, `user_email`). The service does not seed users on startup.
 
-## API overview
+Login:
+
+```bash
+curl -s -X POST http://localhost:8081/audit/auth/login \
+  -H "Content-Type: application/json" \
+  -d "{\"username\":\"YOUR_USER\",\"password\":\"YOUR_PASSWORD\"}"
+```
+
+Use the returned token as `Authorization: Bearer <token>` on all other `/audit` endpoints.
+
+## API
 
 Base path: `/audit`
 
-|Method|Endpoint|Purpose|Role|
-|-|-|-|-|
-|POST|`/createEvent`|Append an event|ADMIN|
-|GET|`/events`|Query events with filters and pagination|ADMIN, REGULATOR|
-|GET|`/verify`|Verify the complete chain|ADMIN|
-|PUT|`/checkForRetention`|Apply the retention policy|ADMIN|
-|PUT|`/redact`|Redact selected payload fields|ADMIN|
-|GET|`/export`|Export events for an actor or resource|ADMIN, REGULATOR|
+| Method | Endpoint | Purpose | Roles |
+| --- | --- | --- | --- |
+| POST | `/auth/login` | Issue JWT | Public (rate limited) |
+| POST | `/createEvent` | Append an event | ADMIN |
+| GET | `/events` | Query events | ADMIN, REGULATOR |
+| GET | `/verify` | Verify the complete hash chain | ADMIN |
+| PUT | `/checkForRetention` | Archive events older than `days` | ADMIN |
+| PUT | `/redact` | Redact selected payload fields | ADMIN |
+| GET | `/export` | CSV export with chain metadata | ADMIN, REGULATOR |
 
-All protected endpoints require the headers `username` and `useremail` in the current prototype.
+## Security controls (current)
 
-## Example event
+* JWT HS256 with `iss`, `aud`, and unique `jti` validation (`audit.jwt.issuer`, `audit.jwt.audience`, `audit.jwt.require-jti`).
+* CORS allowlist (`http://localhost:8080`, `8081`, `8082`), methods GET/PUT/POST, header `Authorization`, exposed `Content-Disposition`, `allowCredentials=false`, preflight `maxAge=3600`.
+* Login rate limit: 5 failed attempts per username+IP in 15 minutes, then HTTP `429`. Successful login resets the window. Error bodies do not disclose whether a username exists.
+* Request limits: multipart/request 1 MB, payload field max 8192 characters. Oversized bodies return `400` (Bean Validation) or `413` (request too large). Error responses do not echo payload contents.
 
-```json
-{
-  "eventType": "USER\_LOGIN",
-  "actorId": "A1234",
-  "resourceType": "webapp",
-  "resourceId": "R1234",
-  "payload": "{'userName':'u1','action':'loggedin'}"
-}
+## Production profile
+
+Activate with `--spring.profiles.active=prod`. This profile:
+
+* Requires secrets from the environment (`AUDIT_JWT_SECRET`, `AUDIT_DB_USERNAME`, `AUDIT_DB_PASSWORD`, CORS, TLS keystore).
+* Disables the H2 console and SQL logging.
+* Sets `spring.jpa.hibernate.ddl-auto=validate`.
+* Enables Flyway migrations from `src/main/resources/db/migration`.
+* Enables TLS (`AUDIT_TLS_ENABLED`, `AUDIT_TLS_KEYSTORE`, `AUDIT_TLS_KEYSTORE_PASSWORD`).
+
+Example:
+
+```bash
+./mvnw spring-boot:run -Dspring-boot.run.profiles=prod
 ```
 
-The server assigns the timestamp during creation. The service stores the visible payload separately from the internal sealed payload used for deterministic hashing.
+Set at least:
 
-## Verification behavior
+```text
+AUDIT_JWT_SECRET
+AUDIT_DB_USERNAME
+AUDIT_DB_PASSWORD
+AUDIT_CORS_ALLOWED_ORIGINS
+AUDIT_TLS_KEYSTORE
+AUDIT_TLS_KEYSTORE_PASSWORD
+```
 
-`GET /audit/verify` recalculates each event hash from the current database values and verifies its `previousHash` link. It reports the first invalid event and the violation type.
-
-Expected outcomes:
-
-* Unmodified chain: intact.
-* Authorized redaction through `/redact`: intact; the event hash is preserved.
-* Direct modification of protected event data: event hash mismatch.
-* Direct modification of an earlier stored hash: the modified event fails its own hash check; later links are no longer trusted.
-* Broken `previousHash`: previous-hash mismatch.
-
-## Export behavior
-
-`GET /audit/export` returns `text/csv` with `Content-Disposition: attachment; filename="Event\_Bundle.csv"`. Postman may display the CSV inline; use “Send and Download” or save the response as a `.csv` file.
+Prototype `application.properties` values are not copied into production.
 
 ## Testing
 
-Run the project test command:
+Run tests, Surefire reports, and JaCoCo coverage with the check thresholds:
 
 ```bash
-./mvnw test
+./mvnw verify
 ```
 
-The test suite covered:
+Windows:
 
-* Event creation and hash generation.
-* Empty and populated payloads.
-* Query filters and pagination.
-* First-record genesis behavior.
-* Multiple-event chain verification.
-* Direct database modification detection.
-* Redaction preserving the original hash.
-* Retention archiving without a false chain break.
-* Export content type, headers, escaping, and chain metadata.
-* RBAC permissions and missing/invalid headers.
+```bash
+.\mvnw.cmd verify
+```
 
+Artifacts:
+
+* Surefire: `target/surefire-reports/`
+* JaCoCo HTML: `target/site/jacoco/index.html`
+* JaCoCo CSV: `target/site/jacoco/jacoco.csv`
+
+Coverage gates (JaCoCo `check` during `verify`):
+
+* Line coverage minimum **0.99**
+* Branch coverage minimum **0.90**
+
+The suite covers JWT claim validation, CORS, RBAC, login rate limiting, payload size limits, and direct SQL tamper detection.

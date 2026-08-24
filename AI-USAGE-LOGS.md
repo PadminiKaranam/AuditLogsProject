@@ -286,8 +286,9 @@ Requirements:
 7. Write the new testcases and also modify the existing testcases for this role based access control given to the endpoints and verify all the existing and new testcases.
 
 
+Enhancements:
 
-### Prompt- 2:
+### Prompt- 1:
 Act as a Security Engineer and 
 
 Enhance this audit-log-service by replacing the `username` and `useremail` request-header authentication approach with JWT-based authentication while retaining the existing user records and user types in the H2 `USERS` table.
@@ -317,4 +318,100 @@ The login endpoint must:
 - `GET /export` -> `hasAnyRole("ADMIN", "REGULATOR")`
 
 4. Add the junit testcases and try to cover 100% and verify them
+
+
+### Prompt- 2:
+
+Act as a Security engineer and perform the below upgrades to the existing audit-log-service without changing the actual functionality:
+
+1. Update CORS configuration to remove wide-open CORS access.
+
+Replace it with a secure allowlist-based CORS configuration.
+
+Requirements:
+- Do not use `setAllowedOriginPatterns(List.of("*"))`.
+- Allow only known frontend origins through configuration properties.
+- Use the below allowed origins
+  - `http://localhost:8080`
+  - `http://localhost:8081`
+  - `http://localhost:8082`
+- Allow only required methods: GET, PUT and POST
+- Allow only required headers: Authorization
+- Expose `Content-Disposition` only if required for CSV export file names.
+- Set `allowCredentials(false)` because JWT is sent through the `Authorization: Bearer <token>` header rather than cookies.
+- Configure `maxAge` for preflight requests, for example `3600L`.
+- Ensure unauthorized origins are blocked by browsers.
+- Ensure that the original functionality should behave as same.
+
+2. Update the JWT authentication implementation so username and password are not hard-coded in Java code, request headers, or application.properties.
+
+Requirements:
+- Do not add username/password values to application.properties.
+- Do not use JSON containing username/password in configuration files.
+- Assume that we are already storing application users in the existing H2 `USERS` table and make sure that this users table will not be reloaded again and again on every start of the application.
+- Generate the JWT token by assuming that the USERS table already has all the details required. Just validate the data given with the users table. Do not set external username or password. All the other implementation and functionality should remain same.
+
+3. Add the new testcases and modify the existing testacases if required to cover 100% code and verify those by executing.
+
+
+### Prompt-3:
+
+a. Enhance the existing audit-log-service JWT implementation by adding JWT issuer, audience, and token ID validation.
+
+Requirements:
+
+1. Add the properties of JWT issuer, audience and token ID validation to application.properties
+2. Update JwtService:
+- Inject issuer and audience.
+- During token generation, add:
+  - `iss` claim using the configured issuer.
+  - `aud` claim using the configured audience.
+  - `jti` claim containing a newly generated UUID for every token.
+- Keep existing claims as is. During the token validation include all these.
+4. Do not change existing endpoint role mappings.
+5. Generate:Unit tests for:
+  - Valid token.
+  - Missing issuer.
+  - Wrong issuer.
+  - Missing audience.
+  - Wrong audience.
+  - Missing JWT ID.
+  - Expired token.
+
+
+b. Add request-size and payload-abuse controls to the existing audit-log-service
+
+Goal:
+Prevent oversized HTTP requests and extremely large payload values from consuming excessive memory, CPU, database storage, or hash-computation time.
+
+Requirements:
+
+1. Update `application.properties` with sensible limit like maxFileSize, maxRequestSize, .....
+2. Update EventCreateRequest:
+- Add these validations to payload field in the request body.
+- Keep existing validation for the remaining fields.
+
+4. Add a global exception handler:
+- Return HTTP `400 Bad Request` for Bean Validation failures.
+- Return HTTP `413 Payload Too Large` for oversized request bodies when supported by the server.
+- Do not include sensitive payload data in error responses.
+
+
+c. Add basic in-memory login rate limiting 
+
+Goal:
+Prevent repeated brute-force password attempts against `/auth/login`.
+
+Requirements:
+- Allow a maximum of 5 failed login attempts.
+- Rate-limit window: 15 minutes.
+- If limit is exceeded, return HTTP `429 Too Many Requests`.
+- Successful login clears/reset failed attempts for that username and client IP.
+- After 15 minutes, the failed-attempt window automatically resets.
+- Do not reveal whether a username exists.
+- Do not log passwords, JWTs, or password hashes.
+
+d. Create security regression tests for the existing Spring Boot audit API.
+e. Update all the testcases and also add actor/resource ownership authorization and cross-tenant denial testcases, Use database locking/sequence strategy and add concurrent append/direct SQL tamper testcases. for all the endpoints. Ensure that all the testcases covers 100% code and publish Surefire/JaCoCo artifacts, thresholds and exact run command/output.
+f. README.md retains template language and runtime configuration is prototype-only. Finalize README and provide separate production profile with strict secrets, migrations and TLS.
 

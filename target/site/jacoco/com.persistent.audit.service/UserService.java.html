@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>UserService.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report"></a> &gt; <a href="index.source.html" class="el_package">com.persistent.audit.service</a> &gt; <span class="el_source">UserService.java</span></div><h1>UserService.java</h1><pre class="source lang-java linenums">package com.persistent.audit.service;
+
+import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.stereotype.Service;
+import org.springframework.util.StringUtils;
+import org.springframework.web.context.request.RequestContextHolder;
+import org.springframework.web.context.request.ServletRequestAttributes;
+
+import com.persistent.audit.exceptions.UserNotFoundException;
+import com.persistent.audit.model.LoginResponse;
+import com.persistent.audit.model.User;
+import com.persistent.audit.repository.UserRepository;
+import com.persistent.audit.security.JwtService;
+import com.persistent.audit.security.LoginRateLimiter;
+
+import jakarta.servlet.http.HttpServletRequest;
+import lombok.extern.slf4j.Slf4j;
+
+<span class="fc" id="L19">@Slf4j</span>
+@Service
+public class UserService {
+
+	private final UserRepository userRepository;
+	private final PasswordEncoder passwordEncoder;
+	private final JwtService jwtService;
+	private final LoginRateLimiter loginRateLimiter;
+
+	public UserService(UserRepository userRepository, PasswordEncoder passwordEncoder, JwtService jwtService,
+<span class="fc" id="L29">			LoginRateLimiter loginRateLimiter) {</span>
+<span class="fc" id="L30">		this.userRepository = userRepository;</span>
+<span class="fc" id="L31">		this.passwordEncoder = passwordEncoder;</span>
+<span class="fc" id="L32">		this.jwtService = jwtService;</span>
+<span class="fc" id="L33">		this.loginRateLimiter = loginRateLimiter;</span>
+<span class="fc" id="L34">	}</span>
+
+	public LoginResponse login(String username, String password) {
+<span class="fc bfc" id="L37" title="All 4 branches covered.">		if (!StringUtils.hasText(username) || !StringUtils.hasText(password)) {</span>
+<span class="fc" id="L38">			throw new IllegalArgumentException(&quot;username and password are required&quot;);</span>
+		}
+<span class="fc" id="L40">		String clientIp = clientIp();</span>
+<span class="fc" id="L41">		loginRateLimiter.check(username, clientIp);</span>
+<span class="fc" id="L42">		User user = userRepository.findByUsername(username.trim())</span>
+<span class="fc" id="L43">				.orElse(null);</span>
+<span class="fc bfc" id="L44" title="All 4 branches covered.">		if (user == null || !StringUtils.hasText(user.getPassword())</span>
+<span class="fc bfc" id="L45" title="All 2 branches covered.">				|| !passwordEncoder.matches(password, user.getPassword())) {</span>
+<span class="fc" id="L46">			loginRateLimiter.recordFailure(username, clientIp);</span>
+<span class="fc" id="L47">			throw new UserNotFoundException(&quot;Invalid username or password&quot;);</span>
+		}
+<span class="fc" id="L49">		loginRateLimiter.reset(username, clientIp);</span>
+<span class="fc" id="L50">		String token = jwtService.generateToken(user);</span>
+<span class="fc" id="L51">		log.info(&quot;Issued JWT for username={} userType={}&quot;, user.getUsername(), user.getUserType());</span>
+<span class="fc" id="L52">		return new LoginResponse(</span>
+				token,
+				&quot;Bearer&quot;,
+<span class="fc" id="L55">				jwtService.getExpirationMs(),</span>
+<span class="fc" id="L56">				user.getUsername(),</span>
+<span class="fc" id="L57">				user.getUserEmail(),</span>
+<span class="fc" id="L58">				user.getUserType());</span>
+	}
+
+	private String clientIp() {
+<span class="fc" id="L62">		ServletRequestAttributes attributes = (ServletRequestAttributes) RequestContextHolder.getRequestAttributes();</span>
+<span class="fc bfc" id="L63" title="All 2 branches covered.">		if (attributes == null) {</span>
+<span class="fc" id="L64">			return &quot;unknown&quot;;</span>
+		}
+<span class="fc" id="L66">		HttpServletRequest request = attributes.getRequest();</span>
+<span class="fc" id="L67">		String forwarded = request.getHeader(&quot;X-Forwarded-For&quot;);</span>
+<span class="fc bfc" id="L68" title="All 2 branches covered.">		if (StringUtils.hasText(forwarded)) {</span>
+<span class="fc" id="L69">			return forwarded.split(&quot;,&quot;)[0].trim();</span>
+		}
+<span class="fc bfc" id="L71" title="All 2 branches covered.">		return request.getRemoteAddr() == null ? &quot;unknown&quot; : request.getRemoteAddr();</span>
+	}
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.15.202606040825</span></div></body></html>

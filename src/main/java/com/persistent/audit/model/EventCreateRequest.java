@@ -29,5 +29,6 @@ public class EventCreateRequest {
 	private String resourceId;
 
 	@NotBlank(message = "payload is required")
+	@Size(max = 8192, message = "payload exceeds maximum allowed size")
 	private String payload;
 }

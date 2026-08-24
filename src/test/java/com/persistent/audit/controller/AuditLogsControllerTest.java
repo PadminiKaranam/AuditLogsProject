@@ -176,7 +176,19 @@ class AuditLogsControllerTest {
 		mockMvc.perform(post("/audit/createEvent")
 				.contentType(MediaType.APPLICATION_JSON)
 				.content("{not-json"))
-				.andExpect(status().isBadRequest());
+				.andExpect(status().isBadRequest())
+				.andExpect(jsonPath("$.error").value("Request body is malformed"));
+	}
+
+	@Test
+	void createEvent_oversizedPayloadReturnsBadRequestWithoutPayloadEcho() throws Exception {
+		String huge = "x".repeat(8193);
+		mockMvc.perform(post("/audit/createEvent")
+				.contentType(MediaType.APPLICATION_JSON)
+				.content("{\"eventType\":\"LOGIN\",\"actorId\":\"actor-1\",\"resourceType\":\"SESSION\",\"resourceId\":\"s-1\",\"payload\":\"" + huge + "\"}"))
+				.andExpect(status().isBadRequest())
+				.andExpect(jsonPath("$.fields.payload").value("payload exceeds maximum allowed size"))
+				.andExpect(result -> assertThat(result.getResponse().getContentAsString()).doesNotContain(huge));
 	}
 
 	@Test

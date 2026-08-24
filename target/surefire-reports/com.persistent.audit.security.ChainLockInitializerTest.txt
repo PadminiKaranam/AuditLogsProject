@@ -1,0 +1,16 @@
+-------------------------------------------------------------------------------
+Test set: com.persistent.audit.security.ChainLockInitializerTest
+-------------------------------------------------------------------------------
+Tests run: 1, Failures: 0, Errors: 1, Skipped: 0, Time elapsed: 0.033 s <<< FAILURE! -- in com.persistent.audit.security.ChainLockInitializerTest
+com.persistent.audit.security.ChainLockInitializerTest -- Time elapsed: 0.033 s <<< ERROR!
+java.lang.NoClassDefFoundError: com/persistent/audit/repository/EventChainLockRepository
+	at java.base/java.lang.Class.getDeclaredFields0(Native Method)
+	at java.base/java.lang.Class.privateGetDeclaredFields(Class.java:3475)
+	at java.base/java.lang.Class.getDeclaredFields(Class.java:2544)
+	at java.base/java.util.ArrayList.forEach(ArrayList.java:1596)
+Caused by: java.lang.ClassNotFoundException: com.persistent.audit.repository.EventChainLockRepository
+	at java.base/jdk.internal.loader.BuiltinClassLoader.loadClass(BuiltinClassLoader.java:641)
+	at java.base/jdk.internal.loader.ClassLoaders$AppClassLoader.loadClass(ClassLoaders.java:188)
+	at java.base/java.lang.ClassLoader.loadClass(ClassLoader.java:526)
+	... 4 more
+
