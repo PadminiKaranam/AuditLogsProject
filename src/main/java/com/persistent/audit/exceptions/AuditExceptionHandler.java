@@ -52,6 +52,12 @@ public class AuditExceptionHandler {
 		return ApiErrorResponse.of(HttpStatus.NOT_FOUND, ex.getMessage(), null);
 	}
 
+	@ExceptionHandler(JwtAuthenticationException.class)
+	public ResponseEntity<Map<String, Object>> handleJwt(JwtAuthenticationException ex) {
+		log.error("JWT authentication failed: {}", ex.getMessage(), ex);
+		return ApiErrorResponse.of(HttpStatus.UNAUTHORIZED, ex.getMessage(), null);
+	}
+
 	@ExceptionHandler(UserNotFoundException.class)
 	public ResponseEntity<Map<String, Object>> handleUserNotFound(UserNotFoundException ex) {
 		log.error("User authentication failed: {}", ex.getMessage(), ex);

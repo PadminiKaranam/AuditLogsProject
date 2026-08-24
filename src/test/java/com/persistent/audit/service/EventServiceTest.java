@@ -307,6 +307,87 @@ class EventServiceTest {
 	}
 
 	@Test
+	void exportBundle_quotesSpecialCsvValuesAndNullHashes() {
+		Event comma = event(9L, null, null);
+		comma.setPayload("has,comma");
+		comma.setTimestamp(null);
+		Event quote = event(10L, "h", null);
+		quote.setPayload("has\"quote");
+		Event newline = event(11L, "h", "p");
+		newline.setPayload("has\nnewline");
+		Event cr = event(12L, "h", "p");
+		cr.setPayload("has\rcarriage");
+		when(eventRepository.findForExport(null, null)).thenReturn(List.of(comma, quote, newline, cr));
+
+		String csv = new String(eventService.exportBundle(null, null), java.nio.charset.StandardCharsets.UTF_8);
+
+		assertThat(csv).contains("has,comma");
+		assertThat(csv).contains("has\"\"quote");
+		assertThat(csv).contains("newline");
+		assertThat(csv).contains("carriage");
+		assertThat(csv).contains(PayloadMerkleHasher.sha256(""));
+	}
+
+	@Test
+	void getEvents_actorIdOnlyUsesFindEvents() {
+		when(eventRepository.findEvents(isNull(), eq("actor-1"), isNull(), isNull(), isNull(), isNull(), any(Pageable.class)))
+				.thenReturn(new PageImpl<>(List.of()));
+		eventService.getEvents(null, "actor-1", null, null, null, null);
+		verify(eventRepository).findEvents(isNull(), eq("actor-1"), isNull(), isNull(), isNull(), isNull(), any(Pageable.class));
+	}
+
+	@Test
+	void getEvents_resourceTypeOnlyUsesFindEvents() {
+		when(eventRepository.findEvents(isNull(), isNull(), eq("SESSION"), isNull(), isNull(), isNull(), any(Pageable.class)))
+				.thenReturn(new PageImpl<>(List.of()));
+		eventService.getEvents(null, null, "SESSION", null, null, null);
+		verify(eventRepository).findEvents(isNull(), isNull(), eq("SESSION"), isNull(), isNull(), isNull(), any(Pageable.class));
+	}
+
+	@Test
+	void getEvents_resourceIdOnlyUsesFindEvents() {
+		when(eventRepository.findEvents(isNull(), isNull(), isNull(), eq("res-1"), isNull(), isNull(), any(Pageable.class)))
+				.thenReturn(new PageImpl<>(List.of()));
+		eventService.getEvents(null, null, null, "res-1", null, null);
+		verify(eventRepository).findEvents(isNull(), isNull(), isNull(), eq("res-1"), isNull(), isNull(), any(Pageable.class));
+	}
+
+	@Test
+	void getEvents_toTimestampOnlyUsesFindEvents() {
+		Instant to = Instant.parse("2026-08-31T23:59:59Z");
+		when(eventRepository.findEvents(isNull(), isNull(), isNull(), isNull(), isNull(), eq(to), any(Pageable.class)))
+				.thenReturn(new PageImpl<>(List.of()));
+		eventService.getEvents(null, null, null, null, null, to);
+		verify(eventRepository).findEvents(isNull(), isNull(), isNull(), isNull(), isNull(), eq(to), any(Pageable.class));
+	}
+
+	@Test
+	void redactFieldsFromPayload_deduplicatesKeys() {
+		Event stored = committedEvent(4L, "{\"name\":\"Alice\",\"account\":\"12345\"}", null);
+		when(eventRepository.findById(4L)).thenReturn(Optional.of(stored));
+		when(eventRepository.save(any(Event.class))).thenAnswer(invocation -> invocation.getArgument(0));
+		eventService.redactFieldsFromPayload(4L, "account, account");
+		assertThat(PayloadMerkleHasher.parseObject(stored.getPayload()).get("account").isNull()).isTrue();
+	}
+
+	@Test
+	void checkForRetention_skipsEventsWithoutTimestamp() {
+		Event missingTs = event(1L, "h1", null);
+		missingTs.setTimestamp(null);
+		when(eventRepository.findByStatus(EventStatus.ACTIVE)).thenReturn(List.of(missingTs));
+		RetentionCheckResult result = eventService.checkForRetention(1);
+		assertThat(result.getArchivedCount()).isZero();
+		verify(eventRepository, never()).save(any(Event.class));
+	}
+
+	@Test
+	void redactFieldsFromPayload_blankFieldsStringThrows() {
+		assertThatThrownBy(() -> eventService.redactFieldsFromPayload(1L, "   "))
+				.isInstanceOf(IllegalArgumentException.class)
+				.hasMessageContaining("fields is required");
+	}
+
+	@Test
 	void exportBundle_filtersByActorIdOnly() {
 		Event event = event(5L, "h5", "h4");
 		event.setActorId("actor-9");

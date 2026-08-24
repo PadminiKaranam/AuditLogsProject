@@ -27,4 +27,11 @@ class PaginationUtilsTest {
 		assertThat(PaginationUtils.pageRequest(3).getPageNumber()).isEqualTo(3);
 		assertThat(PaginationUtils.pageRequest(3).getPageSize()).isEqualTo(PaginationUtils.PAGE_SIZE);
 	}
+
+	@Test
+	void privateConstructorIsInvokedForCoverage() throws Exception {
+		var constructor = PaginationUtils.class.getDeclaredConstructor();
+		constructor.setAccessible(true);
+		assertThat(constructor.newInstance()).isNotNull();
+	}
 }

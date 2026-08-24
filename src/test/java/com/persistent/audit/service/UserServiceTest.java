@@ -12,10 +12,13 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.security.crypto.password.PasswordEncoder;
 
 import com.persistent.audit.exceptions.UserNotFoundException;
+import com.persistent.audit.model.LoginResponse;
 import com.persistent.audit.model.User;
 import com.persistent.audit.repository.UserRepository;
+import com.persistent.audit.security.JwtService;
 
 @ExtendWith(MockitoExtension.class)
 class UserServiceTest {
@@ -23,48 +26,73 @@ class UserServiceTest {
 	@Mock
 	private UserRepository userRepository;
 
+	@Mock
+	private PasswordEncoder passwordEncoder;
+
+	@Mock
+	private JwtService jwtService;
+
 	@InjectMocks
 	private UserService userService;
 
 	@Test
-	void retrieveUserType_returnsTypeWhenUserExists() {
-		User user = new User(1L, "admin", "ADMIN", "admin@example.com");
-		when(userRepository.findByUserEmailAndUsername("admin@example.com", "admin"))
-				.thenReturn(Optional.of(user));
+	void login_returnsJwtWhenCredentialsMatch() {
+		User user = new User(1L, "admin", "ADMIN", "admin@example.com", "encoded");
+		when(userRepository.findByUsername("admin")).thenReturn(Optional.of(user));
+		when(passwordEncoder.matches("Admin@123", "encoded")).thenReturn(true);
+		when(jwtService.generateToken(user)).thenReturn("signed-jwt");
+		when(jwtService.getExpirationMs()).thenReturn(3600000L);
 
-		assertThat(userService.retrieveUserType("admin@example.com", "admin")).isEqualTo("ADMIN");
-		verify(userRepository).findByUserEmailAndUsername("admin@example.com", "admin");
+		LoginResponse response = userService.login("  admin  ", "Admin@123");
+
+		assertThat(response.getAccessToken()).isEqualTo("signed-jwt");
+		assertThat(response.getTokenType()).isEqualTo("Bearer");
+		assertThat(response.getExpiresIn()).isEqualTo(3600000L);
+		assertThat(response.getUsername()).isEqualTo("admin");
+		assertThat(response.getEmail()).isEqualTo("admin@example.com");
+		assertThat(response.getUserType()).isEqualTo("ADMIN");
+		verify(userRepository).findByUsername("admin");
 	}
 
 	@Test
-	void retrieveUserType_trimsEmailAndUsername() {
-		User user = new User(2L, "reg", "REGULATOR", "reg@example.com");
-		when(userRepository.findByUserEmailAndUsername("reg@example.com", "reg"))
-				.thenReturn(Optional.of(user));
+	void login_throwsWhenUserMissing() {
+		when(userRepository.findByUsername("ghost")).thenReturn(Optional.empty());
 
-		assertThat(userService.retrieveUserType("  reg@example.com  ", "  reg  ")).isEqualTo("REGULATOR");
-	}
-
-	@Test
-	void retrieveUserType_throwsWhenUserNotFound() {
-		when(userRepository.findByUserEmailAndUsername("missing@example.com", "ghost"))
-				.thenReturn(Optional.empty());
-
-		assertThatThrownBy(() -> userService.retrieveUserType("missing@example.com", "ghost"))
+		assertThatThrownBy(() -> userService.login("ghost", "secret"))
 				.isInstanceOf(UserNotFoundException.class)
-				.hasMessageContaining("User not found");
+				.hasMessage("Invalid username or password");
 	}
 
 	@Test
-	void retrieveUserType_throwsWhenEmailBlank() {
-		assertThatThrownBy(() -> userService.retrieveUserType("  ", "admin"))
+	void login_throwsWhenPasswordDoesNotMatch() {
+		User user = new User(1L, "admin", "ADMIN", "admin@example.com", "encoded");
+		when(userRepository.findByUsername("admin")).thenReturn(Optional.of(user));
+		when(passwordEncoder.matches("wrong", "encoded")).thenReturn(false);
+
+		assertThatThrownBy(() -> userService.login("admin", "wrong"))
+				.isInstanceOf(UserNotFoundException.class)
+				.hasMessage("Invalid username or password");
+	}
+
+	@Test
+	void login_throwsWhenStoredPasswordBlank() {
+		User user = new User(1L, "admin", "ADMIN", "admin@example.com", "  ");
+		when(userRepository.findByUsername("admin")).thenReturn(Optional.of(user));
+
+		assertThatThrownBy(() -> userService.login("admin", "Admin@123"))
+				.isInstanceOf(UserNotFoundException.class);
+	}
+
+	@Test
+	void login_throwsWhenUsernameBlank() {
+		assertThatThrownBy(() -> userService.login("  ", "secret"))
 				.isInstanceOf(IllegalArgumentException.class)
 				.hasMessageContaining("required");
 	}
 
 	@Test
-	void retrieveUserType_throwsWhenUsernameBlank() {
-		assertThatThrownBy(() -> userService.retrieveUserType("admin@example.com", null))
+	void login_throwsWhenPasswordBlank() {
+		assertThatThrownBy(() -> userService.login("admin", null))
 				.isInstanceOf(IllegalArgumentException.class)
 				.hasMessageContaining("required");
 	}

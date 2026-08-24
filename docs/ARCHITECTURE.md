@@ -11,7 +11,7 @@ HTTP client
    |
    v
 AuditLogsController
-   |-- validates identity headers and role permissions
+   |-- validates identity Using JWT token
    |-- maps requests to service operations
    v
 EventService

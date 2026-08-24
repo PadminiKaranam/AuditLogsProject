@@ -284,3 +284,37 @@ Requirements:
 5. Do no change the existing logic for all the endpoints and event service layer, repository and entity layers. Just add the header info in the controller for all of these endpoints.
 6. Separate Exception handlers written in controller to a separate package audit.exceptions
 7. Write the new testcases and also modify the existing testcases for this role based access control given to the endpoints and verify all the existing and new testcases.
+
+
+
+### Prompt- 2:
+Act as a Security Engineer and 
+
+Enhance this audit-log-service by replacing the `username` and `useremail` request-header authentication approach with JWT-based authentication while retaining the existing user records and user types in the H2 `USERS` table.
+
+Requirements:
+
+1. Remove manual header authentication
+- Do not accept or trust `username` and `useremail` headers in controller endpoints.
+- Remove repeated header validation logic from controllers.
+- Obtain the authenticated username/email from Spring Security’s authenticated principal after JWT validation.
+- The JWT must be sent through: Authorization: Bearer <access-token>
+
+2. Login endpoint
+Create a public login endpoint in already existing controller: POST audit/auth/login
+
+The login endpoint must:
+- Validate username and password against the existing `USERS` table in H2.
+- Retrieve the userType from the user record and treat it as a role.
+- Return the JWT, token type, expiry, username, email, and user type.
+
+3. Authorization rules:
+- `POST /createEvent` -> `hasRole("ADMIN")`
+- `GET /verify` -> `hasRole("ADMIN")`
+- `POST /checkForRetention` -> `hasRole("ADMIN")`
+- `POST /redact` -> `hasRole("ADMIN")`
+- `GET /getEvents` -> `hasAnyRole("ADMIN", "REGULATOR")`
+- `GET /export` -> `hasAnyRole("ADMIN", "REGULATOR")`
+
+4. Add the junit testcases and try to cover 100% and verify them
+

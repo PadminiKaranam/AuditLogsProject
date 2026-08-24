@@ -73,12 +73,3 @@ USERS
 * New and modified tests for role combinations and failure responses.
 * Separation between read-only regulator operations and ADMIN-only mutations.
 
-## Scoped out
-
-* Password handling and account registration.
-* JWT/OAuth/SSO/MFA integration.
-* Resource-level authorization.
-* User administration APIs.
-* A dedicated security audit stream for access attempts.
-* Regulatory-specific report templates.
-

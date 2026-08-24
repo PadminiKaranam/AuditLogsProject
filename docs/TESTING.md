@@ -82,5 +82,4 @@ Capture sanitized evidence in the repository or review notes:
 * A mock repository does not prove database precision behavior; integration tests are required for timestamp round trips.
 * A local database under developer control is not a trusted integrity anchor.
 * CSV chain metadata does not by itself provide a digital signature.
-* Header-based identity tests validate authorization logic but not production authentication.
 

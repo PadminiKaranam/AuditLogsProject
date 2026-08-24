@@ -1,11 +1,14 @@
 package com.persistent.audit.service;
 
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
 import com.persistent.audit.exceptions.UserNotFoundException;
+import com.persistent.audit.model.LoginResponse;
 import com.persistent.audit.model.User;
 import com.persistent.audit.repository.UserRepository;
+import com.persistent.audit.security.JwtService;
 
 import lombok.extern.slf4j.Slf4j;
 
@@ -14,20 +17,32 @@ import lombok.extern.slf4j.Slf4j;
 public class UserService {
 
 	private final UserRepository userRepository;
+	private final PasswordEncoder passwordEncoder;
+	private final JwtService jwtService;
 
-	public UserService(UserRepository userRepository) {
+	public UserService(UserRepository userRepository, PasswordEncoder passwordEncoder, JwtService jwtService) {
 		this.userRepository = userRepository;
+		this.passwordEncoder = passwordEncoder;
+		this.jwtService = jwtService;
 	}
 
-	public String retrieveUserType(String userEmail, String userName) {
-		if (!StringUtils.hasText(userEmail) || !StringUtils.hasText(userName)) {
-			throw new IllegalArgumentException("username and useremail are required");
+	public LoginResponse login(String username, String password) {
+		if (!StringUtils.hasText(username) || !StringUtils.hasText(password)) {
+			throw new IllegalArgumentException("username and password are required");
 		}
-		log.debug("Retrieving userType for username={}", userName);
-		User user = userRepository.findByUserEmailAndUsername(userEmail.trim(), userName.trim())
-				.orElseThrow(() -> new UserNotFoundException(
-						"User not found for the given username and useremail"));
-		log.info("Resolved userType={} for username={}", user.getUserType(), userName);
-		return user.getUserType();
+		User user = userRepository.findByUsername(username.trim())
+				.orElseThrow(() -> new UserNotFoundException("Invalid username or password"));
+		if (!StringUtils.hasText(user.getPassword()) || !passwordEncoder.matches(password, user.getPassword())) {
+			throw new UserNotFoundException("Invalid username or password");
+		}
+		String token = jwtService.generateToken(user);
+		log.info("Issued JWT for username={} userType={}", user.getUsername(), user.getUserType());
+		return new LoginResponse(
+				token,
+				"Bearer",
+				jwtService.getExpirationMs(),
+				user.getUsername(),
+				user.getUserEmail(),
+				user.getUserType());
 	}
 }

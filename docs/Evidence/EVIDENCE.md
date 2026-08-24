@@ -40,9 +40,6 @@ Store screenshots under `docs/evidence/screenshots/` and ensure the file names m
 
 **Users Table:**
 
-![Users Table](screenshots/03-users-table.png)
-
-
 **Insert Test Data into Users table:**
 
 ![Users table records](screenshots/04-users-table-test-data.png)
@@ -50,9 +47,13 @@ Store screenshots under `docs/evidence/screenshots/` and ensure the file names m
 
 ## Scenario A — Core Audit Log
 
+**Generating Token: **
+`POST /audit/auth/login` request:
+![Token Generation](screenshots/admin-user-token.png)
+
 ### E-02 — First event creation
 
-**Action:** Send an ADMIN-authorized `POST /audit/createEvent` request.
+**Action:** Send an ADMIN-authorized(with the token generated)  `POST /audit/createEvent` request.
 
 **Example request body:**
 
@@ -89,6 +90,11 @@ Store screenshots under `docs/evidence/screenshots/` and ensure the file names m
 ### Event Creation with a normal user not an Admin
 **Action:** Send a second ADMIN-authorized `POST /audit/createEvent` request.
 
+**Token Generation**
+
+![Token Generation for normal user](screenshots/token-with-user-creds.png)
+
+
 **Expected result:** The API returns `403 Access Forbidden`.
 
 ![Event creation with not an Admin](screenshots/07-create-event-not-admin.png)
@@ -105,7 +111,7 @@ Store screenshots under `docs/evidence/screenshots/` and ensure the file names m
 **Example:**
 
 ```text
-GET /audit/events?eventType=A1234&actorId&resourceType&resourceId&fromTimestamp&toTimestampeventType=USER_LOGIN&actorId&resourceType&resourceId&fromTimestamp&toTimestamp
+GET /audit/events?eventType=USER_LOGIN&actorId&resourceType&resourceId&fromTimestamp&toTimestampeventType=USER_LOGIN&actorId&resourceType&resourceId&fromTimestamp&toTimestamp
 ```
 
 **Expected result:** The response returns the matching page of event records. The visible payload does not expose internal `sealedPayload`, salts, or leaf hashes.
@@ -145,6 +151,8 @@ GET /audit/events?eventType=&actorId&resourceType&resourceId&fromTimestamp&toTim
 
 ### Call Verify as a Regulator
 
+![Generate token as regulator](screenshots/regulator-token-generation.png)
+
 **Action:** Call `GET /audit/verify` after creating events and before making any direct database changes as a Regulator.
 
 **Expected result:** The response reports Access Forbidden.
@@ -163,7 +171,7 @@ GET /audit/events?eventType=&actorId&resourceType&resourceId&fromTimestamp&toTim
 ```sql
 UPDATE event
 SET actor_id = 'B123'
-WHERE id = 1;;
+WHERE id = 34;
 ```
 
 **Expected result:** The database row changes, but the stored event hash does not change.
@@ -176,7 +184,7 @@ WHERE id = 1;;
 
 ### E-07 — Direct tampering is detected
 
-**Action:** Call `GET /audit/verify` after the direct database modification.
+**Action:** Call `GET /audit/verify` as an admin after the direct database modification.
 
 **Expected result:** The response identifies the first affected record and reports `EVENT HASH MISMATCH` or the appropriate violation type.
 
@@ -199,7 +207,7 @@ WHERE id = 1;;
 ```sql
 UPDATE event
 SET timestamp = '2025-08-23 09:54:11.818703+00'
-WHERE id = 1;
+WHERE id = 34;
 ```
 
 **Expected result:** The database row changes, but the stored event hash does not change.

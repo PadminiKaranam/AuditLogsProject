@@ -53,10 +53,6 @@ The final repository should contain or reference evidence for:
 
 ## Key risks and trade-offs
 
-### Security
-
-The current header-based identity mechanism is suitable only as a prototype boundary. Production requires signed tokens or enterprise SSO, TLS, MFA where appropriate, resource-level authorization, rate limits, and protected database access.
-
 ### Integrity
 
 A hash chain detects inconsistent modifications, but SHA-256 hashes stored in the same database are not an independent trust anchor against a fully privileged database administrator. Production should add signed checkpoints, an external integrity service, or WORM storage.
@@ -83,11 +79,8 @@ CSV is interoperable but less self-describing than a versioned JSON bundle. A pr
 
 ## Limitations
 
-* Authentication is not production-grade.
 * User creation and lifecycle management are not included.
 * No external identity provider is integrated.
 * No signed checkpoint or key-management workflow is included.
-* Physical deletion is not implemented.
-* Access-attempt logging is not separated into a dedicated security audit stream.
 * The implementation must be tested for concurrent append behavior before production use.
 

@@ -27,7 +27,7 @@ public class User {
 
 	@NotBlank
 	@Size(max = 100)
-	@Column(name = "username", nullable = false, length = 100)
+	@Column(name = "username", nullable = false, unique = true, length = 100)
 	private String username;
 
 	@NotBlank
@@ -39,4 +39,8 @@ public class User {
 	@Size(max = 255)
 	@Column(name = "user_email", nullable = false, unique = true, length = 255)
 	private String userEmail;
+
+	@Size(max = 255)
+	@Column(name = "password", length = 255)
+	private String password;
 }

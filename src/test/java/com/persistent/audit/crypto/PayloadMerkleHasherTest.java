@@ -94,4 +94,85 @@ class PayloadMerkleHasherTest {
 	void seal_emptyObjectStaysEmpty() {
 		assertThat(PayloadMerkleHasher.seal("{}")).isEqualTo("{}");
 	}
+
+	@Test
+	void parseObject_blankOrNullBecomesEmptyObject() {
+		assertThat(PayloadMerkleHasher.parseObject(null).isEmpty()).isTrue();
+		assertThat(PayloadMerkleHasher.parseObject("  ").isEmpty()).isTrue();
+	}
+
+	@Test
+	void parseObject_rejectsInvalidJson() {
+		assertThatThrownBy(() -> PayloadMerkleHasher.parseObject("{not-json"))
+				.isInstanceOf(IllegalArgumentException.class)
+				.hasMessageContaining("valid JSON");
+	}
+
+	@Test
+	void seal_skipsNullFieldsAndKeepsExistingSalts() {
+		String sealed = PayloadMerkleHasher.seal("{\"name\":\"Alice\",\"skip\":null}");
+		var node = PayloadMerkleHasher.parseObject(sealed);
+		assertThat(node.get("skip").isNull()).isTrue();
+		assertThat(PayloadMerkleHasher.nestedStringMap(node, PayloadMerkleHasher.SALTS_KEY)).containsOnlyKeys("name");
+
+		String resealed = PayloadMerkleHasher.seal(sealed);
+		assertThat(PayloadMerkleHasher.nestedStringMap(PayloadMerkleHasher.parseObject(resealed), PayloadMerkleHasher.SALTS_KEY)
+				.get("name"))
+				.isEqualTo(PayloadMerkleHasher.nestedStringMap(node, PayloadMerkleHasher.SALTS_KEY).get("name"));
+	}
+
+	@Test
+	void redact_rejectsReservedOrMissingKeys() {
+		String sealed = PayloadMerkleHasher.seal("{\"name\":\"Alice\"}");
+		assertThatThrownBy(() -> PayloadMerkleHasher.redact(sealed, List.of("__salts")))
+				.isInstanceOf(IllegalArgumentException.class);
+		assertThatThrownBy(() -> PayloadMerkleHasher.redact(sealed, List.of("missing")))
+				.isInstanceOf(IllegalArgumentException.class);
+	}
+
+	@Test
+	void collectLeafHashes_usesStoredLeafWhenSaltMissingAndSkipsWhenLeafMissing() {
+		String json = "{\"name\":\"Alice\",\"orphan\":null,\"__salts\":{\"name\":\"  \"},\"__leaves\":{\"name\":\"stored-leaf\"}}";
+		Map<String, String> leaves = PayloadMerkleHasher.collectLeafHashes(json);
+		assertThat(leaves).containsEntry("name", "stored-leaf").doesNotContainKey("orphan");
+	}
+
+	@Test
+	void nestedStringMap_handlesNullObjectAndNonObjectMetadata() {
+		assertThat(PayloadMerkleHasher.nestedStringMap(null, "__salts")).isEmpty();
+		var object = PayloadMerkleHasher.parseObject("{\"__salts\":\"not-an-object\",\"n\":1,\"gone\":null}");
+		assertThat(PayloadMerkleHasher.nestedStringMap(object, PayloadMerkleHasher.SALTS_KEY)).isEmpty();
+		assertThat(PayloadMerkleHasher.fieldValue(null)).isEmpty();
+		assertThat(PayloadMerkleHasher.fieldValue(object.get("gone"))).isEmpty();
+		assertThat(PayloadMerkleHasher.fieldValue(object.get("n"))).isEqualTo("1");
+		assertThat(PayloadMerkleHasher.seal("{\"name\":\"Alice\",\"__salts\":\"x\"}")).contains("__salts");
+	}
+
+	@Test
+	void collectLeafHashes_whenSaltAbsentUsesStoredLeafOrSkips() {
+		assertThat(PayloadMerkleHasher.collectLeafHashes("{\"name\":\"Alice\"}")).isEmpty();
+	}
+
+	@Test
+	void writeJsonAcceptsObjectNode() {
+		assertThat(PayloadMerkleHasher.writeJson(PayloadMerkleHasher.parseObject("{\"a\":1}"))).contains("a");
+	}
+
+	@Test
+	void leafHashAndEventHashTreatNullsAsEmpty() {
+		assertThat(PayloadMerkleHasher.leafHash(null, null, null)).isEqualTo(PayloadMerkleHasher.sha256(""));
+		assertThat(PayloadMerkleHasher.computeEventHash(null, null, null, null, null, null, null))
+				.isEqualTo(PayloadMerkleHasher.sha256("||||||"));
+		assertThat(PayloadMerkleHasher.isReserved("__leaves")).isTrue();
+		assertThat(PayloadMerkleHasher.isReserved("name")).isFalse();
+		assertThat(PayloadMerkleHasher.writeJson(PayloadMerkleHasher.parseObject("{}"))).isEqualTo("{}");
+		assertThat(PayloadMerkleHasher.sha256(null)).isEqualTo(PayloadMerkleHasher.sha256(""));
+	}
+
+	@Test
+	void privateConstructorIsInvokedForCoverage() throws Exception {
+		var constructor = PayloadMerkleHasher.class.getDeclaredConstructor();
+		constructor.setAccessible(true);
+		assertThat(constructor.newInstance()).isNotNull();
+	}
 }
